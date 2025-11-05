@@ -780,4 +780,15 @@ done:
     riscv_raise_exception(env, exception, GETPC());
 }
 
+// Tensor Instructions helper
+target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
+                          target_ulong rs2, target_ulong rd, 
+                          int inst
+                        )
+{
+    printf("Get tx: 0x%x, rs1: %lx, rs2: %lx, rd: %lx\n", inst, rs1, rs2, rd);
+    target_ulong ret = rd;
+    return ret;
+}
+
 #endif /* !CONFIG_USER_ONLY */
