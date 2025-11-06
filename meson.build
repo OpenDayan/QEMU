@@ -4398,6 +4398,12 @@ foreach target : target_dirs
       'sources': files('system/main.c'),
       'dependencies': [sdl]
     }]
+    execs += [{
+      'name': 'dl-' + target_name,
+      'win_subsystem': 'console',
+      'sources': files('system/main_dl.c'),
+      'dependencies': [sdl]
+    }]
     if host_os == 'windows' and (sdl.found() or gtk.found())
       execs += [{
         'name': 'qemu-system-' + target_name + 'w',
@@ -4429,14 +4435,24 @@ foreach target : target_dirs
       exe_name += '-unsigned'
     endif
 
-    emulator = executable(exe_name, exe['sources'],
-               install: true,
-               c_args: c_args,
-               dependencies: arch_deps + exe['dependencies'],
-               objects: lib.extract_all_objects(recursive: true),
-               link_depends: [block_syms, qemu_syms],
-               link_args: link_args,
-               win_subsystem: exe['win_subsystem'])
+    if exe_name.startswith('dl-')
+      lib = static_library(exe_name, exe['sources'],
+                install: false,
+                c_args: c_args,
+                dependencies: arch_deps + exe['dependencies'],
+                objects: lib.extract_all_objects(recursive: true),
+                link_depends: [block_syms, qemu_syms],
+                link_args: link_args)
+    else 
+      emulator = executable(exe_name, exe['sources'],
+                install: true,
+                c_args: c_args,
+                dependencies: arch_deps + exe['dependencies'],
+                objects: lib.extract_all_objects(recursive: true),
+                link_depends: [block_syms, qemu_syms],
+                link_args: link_args,
+                win_subsystem: exe['win_subsystem'])
+    endif
 
     if host_os == 'darwin'
       icon = 'pc-bios/qemu.rsrc'

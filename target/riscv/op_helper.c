@@ -19,6 +19,8 @@
  */
 
 #include "qemu/osdep.h"
+#include "blocking-queue.h"
+#include "hw/riscv/rvtng-intf.h"
 #include "cpu.h"
 #include "internals.h"
 #include "exec/cputlb.h"
@@ -780,15 +782,30 @@ done:
     riscv_raise_exception(env, exception, GETPC());
 }
 
+RVTPackQ_t rvtPackQ;
+RVTCommitQ_t rvtCommitQ;
 // Tensor Instructions helper
 target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
                           target_ulong rs2, target_ulong rd, 
                           int inst
                         )
 {
-    printf("Get tx: 0x%x, rs1: %lx, rs2: %lx, rd: %lx\n", inst, rs1, rs2, rd);
-    target_ulong ret = rd;
-    return ret;
+    // Issue Instructions
+    rvt_pack_t rvt_inst;
+    rvt_inst.inst = inst; rvt_inst.rd = rd;
+    rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
+    rvt_inst.timestamp = 0; // No Performance simulation.
+    RVTPackQ_put(&rvtPackQ, rvt_inst);
+    // check if need write
+    if((inst & 0b11110000000000000100000000000000) == 0b0000000000000000100000000000000) {
+        // need write
+        rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ);
+        target_ulong ret = cmt.data;
+        return ret;
+    } else {
+        target_ulong ret = rd;
+        return ret;
+    }
 }
 
 #endif /* !CONFIG_USER_ONLY */

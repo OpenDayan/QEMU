@@ -1234,6 +1234,7 @@ static bool trans_tx_all(DisasContext *ctx, arg_tx_all *a)
     TCGv dest = dest_gpr(ctx, (extInst >>  7) & 0x1f);
     TCGv_i32 inst = tcg_constant_i32(extInst);
     gen_helper_tx_all(dest, tcg_env, rs1, rs2, rd, inst);
+    gen_set_gpr(ctx, (extInst >>  7) & 0x1f, dest);
     return true;
 }
 

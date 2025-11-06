@@ -44,7 +44,9 @@ static const MemMapEntry rvtng_v0_memap[] = {
     [RVTNG_V0_DRAM]    = { 0x80000000,           0x0},
 };
 
+// Global Intf for inter-call
 AddressSpace *fuse_as;
+
 static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
