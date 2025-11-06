@@ -56,6 +56,7 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
     qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
     qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type",
                          TYPE_RISCV_CPU_RVTNG_CALC_V0);
+    qdev_prop_set_uint64(DEVICE(&s->cpus), "resetvec", memmap[RVTNG_V0_ROM].base);
     sysbus_realize(SYS_BUS_DEVICE(&s->cpus), &error_fatal);
 
     /* CLINT */

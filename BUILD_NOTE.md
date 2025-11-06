@@ -25,5 +25,5 @@ make
 ## 调试器挂载
 
 ```bash
-gdb-multiarch -ex "target remote localhost:1234"
+gdb-multiarch -ex "target remote localhost:1234" bootrom.elf
 ```
