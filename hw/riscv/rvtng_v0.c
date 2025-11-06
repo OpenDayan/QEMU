@@ -44,6 +44,7 @@ static const MemMapEntry rvtng_v0_memap[] = {
     [RVTNG_V0_DRAM]    = { 0x80000000,           0x0},
 };
 
+AddressSpace *fuse_as;
 static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
@@ -51,6 +52,8 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
     const MemMapEntry *memmap = rvtng_v0_memap;
     MemoryRegion *system_memory = get_system_memory();
     uint32_t num_harts = ms->smp.cpus;
+
+    fuse_as = &address_space_memory;
 
     qdev_prop_set_uint32(DEVICE(&s->cpus), "num-harts", num_harts);
     qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
@@ -111,6 +114,7 @@ static void rvtng_v0_soc_register_types(void)
 }
 type_init(rvtng_v0_soc_register_types)
 
+extern int fuse_init(void);
 static void rvtng_v0_machine_init(MachineState *machine)
 {
     RVTNGV0State *s = RVTNG_V0_MACHINE(machine);
@@ -135,6 +139,9 @@ static void rvtng_v0_machine_init(MachineState *machine)
                      machine->firmware);
         exit(1);
     }
+
+    /* Init Fuse Hook */
+    fuse_init();
 }
 
 static void rvtng_v0_machine_class_init(ObjectClass *klass, const void *data)

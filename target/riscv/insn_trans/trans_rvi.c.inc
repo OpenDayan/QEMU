@@ -1236,3 +1236,10 @@ static bool trans_tx_all(DisasContext *ctx, arg_tx_all *a)
     gen_helper_tx_all(dest, tcg_env, rs1, rs2, rd, inst);
     return true;
 }
+
+static bool trans_flush_dcache(DisasContext *ctx, arg_flush_dcache *a)
+{
+    /* Do Noting. */
+    printf("QEMU: Dcache flushed!\n");
+    return true;
+}

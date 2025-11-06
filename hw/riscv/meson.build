@@ -15,5 +15,7 @@ riscv_ss.add(when: 'CONFIG_RISCV_IOMMU', if_true: files(
 riscv_ss.add(when: 'CONFIG_MICROBLAZE_V', if_true: files('microblaze-v-generic.c'))
 riscv_ss.add(when: 'CONFIG_XIANGSHAN_KUNMINGHU', if_true: files('xiangshan_kmh.c'))
 riscv_ss.add(when: 'CONFIG_RVTNG_V0', if_true: files('rvtng_v0.c'))
+riscv_ss.add(when: 'CONFIG_RVTNG_V0', if_true: files('rvtng_fuse.c'))
+riscv_ss.add(when: 'CONFIG_RVTNG_V0', if_true: declare_dependency(link_args: ['-lfuse3']))
 
 hw_arch += {'riscv': riscv_ss}
