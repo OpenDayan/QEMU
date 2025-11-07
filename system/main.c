@@ -54,6 +54,7 @@ static void *qemu_default_main(void *opaque)
 
     exit(status);
 }
+const int rvtSimBackendEnable = 0;
 
 int (*qemu_main)(void);
 

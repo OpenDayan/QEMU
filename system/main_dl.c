@@ -76,6 +76,7 @@ int frontend_scaler_sim_ready(void) {
 // Global Intf for inter-call
 extern RVTPackQ_t rvtPackQ;
 extern RVTCommitQ_t rvtCommitQ;
+const int rvtSimBackendEnable = 1;
 
 int frontend_scaler_sim_main(int argc, char **argv)
 {
