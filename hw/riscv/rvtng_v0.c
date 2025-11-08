@@ -137,7 +137,7 @@ static void rvtng_v0_machine_init(MachineState *machine)
         hwaddr firmware_entry = memmap[RVTNG_V0_ROM].base;
         riscv_find_and_load_firmware(machine, machine->firmware, &firmware_entry, NULL);
     } else {
-        error_report("Unable to find the stage-1 Bootloader binary \"%s\"",
+        error_report("Unable to find the stage-0 Bootloader binary \"%s\"",
                      machine->firmware);
         exit(1);
     }

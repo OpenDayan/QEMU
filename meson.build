@@ -4436,7 +4436,7 @@ foreach target : target_dirs
     endif
 
     if exe_name.startswith('dl-')
-      lib = static_library(exe_name, exe['sources'],
+      myemu = executable(exe_name, exe['sources'],
                 install: false,
                 c_args: c_args,
                 dependencies: arch_deps + exe['dependencies'],

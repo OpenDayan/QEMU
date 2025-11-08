@@ -19,7 +19,6 @@
  */
 
 #include "qemu/osdep.h"
-#include "blocking-queue.h"
 #include "hw/riscv/rvtng-intf.h"
 #include "cpu.h"
 #include "internals.h"
