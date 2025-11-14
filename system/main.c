@@ -69,6 +69,7 @@ int (*qemu_main)(void) = os_darwin_cfrunloop_main;
 
 int main(int argc, char **argv)
 {
+    __attribute__((unused)) int ret = system("umount /tmp/virtual_npu");
     qemu_init(argc, argv);
 
     /*

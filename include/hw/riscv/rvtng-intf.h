@@ -113,17 +113,8 @@ static inline void* frontend_serve_inst_loop(void* arg) {
     return NULL;
 }
 
-// 生成共享内存名称
-static inline const char* get_shm_name(int coreIdx) {
-    static char name[64];
-    snprintf(name, sizeof(name), "/uram_shm_%d", coreIdx);
-    return name;
-}
-
 // backend端：创建共享内存区域
-static inline void* backend_get_uram_ptr(int coreIdx, size_t sz) {
-    const char* shm_name = get_shm_name(coreIdx);
-    
+static inline void* backend_get_shm_ptr(const char* shm_name, size_t sz) {
     // 创建共享内存对象
     int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
     if (shm_fd == -1) {
@@ -154,9 +145,7 @@ static inline void* backend_get_uram_ptr(int coreIdx, size_t sz) {
 }
 
 // frontend端：打开已创建的共享内存
-static inline void* frontend_get_uram_ptr(int coreIdx) {
-    const char* shm_name = get_shm_name(coreIdx);
-    
+static inline void* frontend_get_shm_ptr(const char* shm_name) {
     // 打开已存在的共享内存对象
     int shm_fd = shm_open(shm_name, O_RDWR, 0666);
     if (shm_fd == -1) {
@@ -189,12 +178,10 @@ static inline void* frontend_get_uram_ptr(int coreIdx) {
 }
 
 // 清理共享内存（可选）
-static inline void cleanup_uram_ptr(int coreIdx, void* ptr, size_t sz) {
+static inline void cleanup_shm_ptr(const char* shm_name, void* ptr, size_t sz) {
     if (ptr && ptr != MAP_FAILED) {
         munmap(ptr, sz);
-    }
-    
-    const char* shm_name = get_shm_name(coreIdx);
+    }    
     shm_unlink(shm_name);
     printf("Cleaned up shared memory '%s'\n", shm_name);
 }

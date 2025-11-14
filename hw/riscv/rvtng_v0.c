@@ -34,6 +34,7 @@
 #include "hw/qdev-properties.h"
 #include "hw/riscv/boot.h"
 #include "hw/riscv/rvtng_v0.h"
+#include "hw/riscv/rvtng-intf.h"
 #include "hw/riscv/riscv_hart.h"
 #include "system/system.h"
 
@@ -41,6 +42,7 @@ static const MemMapEntry rvtng_v0_memap[] = {
     [RVTNG_V0_MAILBOX] = {     0x1000,        0x1000},
     [RVTNG_V0_ROM]     = {    0x10000,        0x1000},
     [RVTNG_V0_CLINT]   = {  0x2000000,       0xc0000},
+    [RVTNG_V0_URAM]    = { 0x10000000,      0x100000}, // 1MB
     [RVTNG_V0_DRAM]    = { 0x80000000,           0x0},
 };
 
@@ -85,6 +87,15 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
                            memmap[RVTNG_V0_MAILBOX].size, &error_fatal);
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_MAILBOX].base, &s->mailbox);
+
+    /* URAM */
+    void *uram = frontend_get_shm_ptr("/uram_shm_0");
+    memory_region_init_ram_ptr(&s->uram, OBJECT(dev), "rvtng.v0.uram",
+                               memmap[RVTNG_V0_URAM].size, uram
+                            );
+    memory_region_add_subregion(system_memory,
+                                memmap[RVTNG_V0_URAM].base, &s->uram
+                            );
 }
 
 static void rvtng_v0_soc_class_init(ObjectClass *klass, const void *data)

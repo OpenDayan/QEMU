@@ -23,6 +23,7 @@ typedef struct RVTNGV0SoCState {
     RISCVHartArrayState cpus;
     MemoryRegion rom;
     MemoryRegion mailbox;
+    MemoryRegion uram;
 } RVTNGV0SoCState;
 
 #define TYPE_RVTNG_V0_SOC "rvtng.v0.soc"
@@ -46,6 +47,7 @@ enum {
     RVTNG_V0_ROM,
     RVTNG_V0_UART0,
     RVTNG_V0_CLINT,
+    RVTNG_V0_URAM,
     RVTNG_V0_DRAM,
 };
 
