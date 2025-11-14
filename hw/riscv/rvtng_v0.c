@@ -90,6 +90,9 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 
     /* URAM */
     void *uram = frontend_get_shm_ptr("/uram_shm_0");
+    if(uram == NULL) {
+        uram = malloc(1024 * 1024);
+    }
     memory_region_init_ram_ptr(&s->uram, OBJECT(dev), "rvtng.v0.uram",
                                memmap[RVTNG_V0_URAM].size, uram
                             );
