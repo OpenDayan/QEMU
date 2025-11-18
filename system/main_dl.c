@@ -116,7 +116,7 @@ int frontend_dram_read_service(char *buf, size_t size, off_t addr)
 {
     MemTxResult res = address_space_read(fuse_as, addr,
         MEMTXATTRS_UNSPECIFIED, buf, size);
-    printf("QEMU Get frontend_dram_read: 0x%lx, res: %d, data[0]: 0x%lx\n", addr, res, *(long*)buf);
+    // printf("QEMU Get frontend_dram_read: 0x%lx, res: %d, data[0]: 0x%lx\n", addr, res, *(long*)buf);
     if(res) {
         printf("frontend_dram_read error: %d.\n", res);
     }
