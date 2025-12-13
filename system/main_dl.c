@@ -137,9 +137,9 @@ int frontend_dram_write_service(char *buf, size_t size, off_t addr)
 // Backend Tensor Instructions API
 int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg) {
     int ret = RVTPackQ_try_take(&rvtPackQ, pkg);
-    if(ret) {
-        printf("QEMU: inst fetched: %lx.\n", pkg->inst);
-    }
+    // if(ret) {
+        // printf("QEMU: inst fetched: %lx.\n", pkg->inst);
+    // }
     return ret;
 }
 

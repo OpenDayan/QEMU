@@ -803,6 +803,10 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
             // need write
             rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ);
             target_ulong ret = cmt.data;
+            // Scoreboard
+            if(ret && (inst & 0b00001000000000000000000000000000) == 0b00001000000000000000000000000000) {
+                printf("Got SB Instruction @%lu Cycle\n", cmt.timestamp);
+            }
             return ret;
         } else {
             target_ulong ret = rd;
