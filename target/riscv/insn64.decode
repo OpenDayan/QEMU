@@ -1,0 +1,31 @@
+#
+# RISC-V translation routines for the RVT 64b Instruction Set.
+#
+# Copyright (c) 2025 Institute of Computing Technology, Chinese Academy of Sciences
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms and conditions of the GNU General Public License,
+# version 2 or later, as published by the Free Software Foundation.
+#
+# This program is distributed in the hope it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+# more details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Decoupled Tensor64 Instructions Fields
+
+%inst64lo 7:25
+%inst64hi 32:32
+
+# Argument sets:
+
+&tensor64 inst64lo inst64hi
+
+# Formats Decoupled Tensor64:
+@tensor64    ................................ ......................... ....... &tensor64 %inst64lo %inst64hi
+
+# Tensor Extension
+tx64_all          ................................ ......................... 0111111 @tensor64

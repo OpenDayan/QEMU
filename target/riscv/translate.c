@@ -1219,6 +1219,10 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "insn_trans/trans_rvzcmop.c.inc"
 #include "insn_trans/trans_rvzicfiss.c.inc"
 
+/* Include the auto-generated decoder for 64 bit insn */
+#include "decode-insn64.c.inc"
+#include "insn_trans/trans_rvt64.c.inc"
+
 /* Include decoders for factored-out extensions */
 #include "decode-XVentanaCondOps.c.inc"
 
@@ -1235,7 +1239,7 @@ const size_t decoder_table_size = ARRAY_SIZE(decoder_table);
 
 static void decode_opc(CPURISCVState *env, DisasContext *ctx)
 {
-    uint32_t opcode;
+    uint64_t opcode;
     bool pc_is_4byte_align = ((ctx->base.pc_next % 4) == 0);
 
     ctx->virt_inst_excp = false;
@@ -1248,7 +1252,7 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx)
          * real one is 2 or 4 bytes. Instruction preload wouldn't trigger
          * additional page fault.
          */
-        opcode = translator_ldl(env, &ctx->base, ctx->base.pc_next);
+        opcode = (uint32_t) translator_ldl(env, &ctx->base, ctx->base.pc_next);
     } else {
         /*
          * For unaligned pc, instruction preload may trigger additional
@@ -1270,7 +1274,7 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx)
             decode_insn16(ctx, opcode)) {
             return;
         }
-    } else {
+    } else if(ctx->cur_insn_len == 4) {
         if (!pc_is_4byte_align) {
             /* Load last 2 bytes of instruction here */
             opcode = deposit32(opcode, 16, 16,
@@ -1285,6 +1289,13 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx)
                 return;
             }
         }
+    } else {
+        // 8-Bytes Instruction Handling
+        /* Load 8-bytes of instruction here */
+        opcode = translator_ldq(env, &ctx->base, ctx->base.pc_next);
+        // printf("Translator Inst: 0x%08lx\n", opcode);
+        decode_insn64(ctx, opcode);
+        return;
     }
 
     gen_exception_illegal(ctx);

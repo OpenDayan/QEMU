@@ -230,7 +230,7 @@ static inline target_ulong adjust_addr_virt(CPURISCVState *env,
 
 static inline int insn_len(uint16_t first_word)
 {
-    return (first_word & 3) == 3 ? 4 : 2;
+    return (first_word & 0x7f) == 0x3f ? 8 : ((first_word & 3) == 3 ? 4 : 2);
 }
 
 #endif

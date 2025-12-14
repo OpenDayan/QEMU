@@ -788,7 +788,7 @@ extern const int rvtSimBackendEnable;
 // Tensor Instructions helper
 target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
                           target_ulong rs2, target_ulong rd, 
-                          int inst
+                          uint32_t inst
                         )
 {
     if(rvtSimBackendEnable) {
@@ -814,6 +814,34 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
         }
     } else {
         printf("Tensor Inst:%x rs1:%lx rs2:%lx rd:%lx\n", inst, rs1, rs2, rd);
+        return rd;
+    }
+}
+
+target_ulong helper_tx64_all(CPURISCVState *env, target_ulong rs1,
+                          target_ulong rs2, target_ulong rs3, target_ulong rd,
+                          uint64_t inst
+                        )
+{
+    if(rvtSimBackendEnable) {
+        // Issue Instructions
+        rvt_pack_t rvt_inst;
+        rvt_inst.inst = inst; rvt_inst.rd = rs3;
+        rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
+        rvt_inst.timestamp = 0; // No Performance simulation.
+        RVTPackQ_put(&rvtPackQ, rvt_inst);
+        // check if need write
+        if((inst & 0b111110000000) != 0) {
+            // need write
+            rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ);
+            target_ulong ret = cmt.data;
+            return ret;
+        } else {
+            target_ulong ret = rd;
+            return ret;
+        }
+    } else {
+        printf("Tensor Inst:%lx rs1:%lx rs2:%lx rs3: %lx, rd:%lx\n", inst, rs1, rs2, rs3, rd);
         return rd;
     }
 }
