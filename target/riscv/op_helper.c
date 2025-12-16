@@ -799,9 +799,19 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
         rvt_inst.timestamp = 0; // No Performance simulation.
         RVTPackQ_put(&rvtPackQ, rvt_inst);
         // check if need write
-        if((inst & 0b11110000000000000100000000000000) == 0b0000000000000000100000000000000) {
+        uint8_t rdIdx = (inst >> 7) & 0x1f;
+        if((inst & 0b11110000000000000100000000000000) == 0b0000000000000000100000000000000 &&
+            rdIdx != 0) {
             // need write
-            rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ);
+            rvt_commit_t cmt;
+            cmt.rd = 0;
+            while(cmt.rd == 0) {
+                // Filiter All Unneeded Commit.
+                cmt = RVTCommitQ_take(&rvtCommitQ);
+            }
+            if(cmt.rd != rdIdx) {
+                printf("Got miss matched RVTCommit, Expect: R%d, Got: R%ld!\n", rdIdx, cmt.rd);
+            }
             target_ulong ret = cmt.data;
             // Scoreboard
             if(ret && (inst & 0b00001000000000000000000000000000) == 0b00001000000000000000000000000000) {

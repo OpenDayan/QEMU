@@ -13,7 +13,7 @@ sudo apt install gdb-multiarch
 mkdir build
 cd build
 ../configure --target-list=riscv64-softmmu
-make
+make -j16
 ```
 
 ## 运行
