@@ -43,7 +43,7 @@ static const MemMapEntry rvtng_v0_memap[] = {
     [RVTNG_V0_ROM]     = {    0x10000,        0x1000},
     [RVTNG_V0_CLINT]   = {  0x2000000,       0xc0000},
     [RVTNG_V0_URAM]    = { 0x10000000,      0x100000}, // 1MB
-    [RVTNG_V0_DRAM]    = { 0x80000000,           0x0},
+    [RVTNG_V0_DRAM]    = { 0x80000000,   0x100000000UL},
 };
 
 // Global Intf for inter-call
@@ -143,9 +143,23 @@ static void rvtng_v0_machine_init(MachineState *machine)
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
     /* Register RAM */
+    // memory_region_add_subregion(system_memory,
+    //                             memmap[RVTNG_V0_DRAM].base,
+    //                             machine->ram);
+
+    /* Shared DRAM */
+    void *dram = frontend_get_shm_ptr("/dram_shm_0");
+    if(dram == NULL) {
+        error_report("Unable to find shared dram pointer");
+        exit(1);
+        dram = malloc(1024 * 1024);
+    }
+    memory_region_init_ram_ptr(&s->dram, OBJECT(machine), "rvtng.dram",
+                               4ul * 1024ul * 1024ul * 1024ul, dram
+                            );
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_DRAM].base,
-                                machine->ram);
+                                memmap[RVTNG_V0_DRAM].base, &s->dram
+                            );
 
     if (machine->firmware) {
         hwaddr firmware_entry = memmap[RVTNG_V0_ROM].base;

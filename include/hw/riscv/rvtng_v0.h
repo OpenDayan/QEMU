@@ -36,6 +36,7 @@ typedef struct RVTNGV0State {
 
     /*< public >*/
     RVTNGV0SoCState soc;
+    MemoryRegion dram;
 } RVTNGV0State;
 
 #define TYPE_RVTNG_V0_MACHINE MACHINE_TYPE_NAME("rvtng-v0")

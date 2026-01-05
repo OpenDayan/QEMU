@@ -81,6 +81,7 @@ extern AddressSpace *fuse_as;
 static int fioc_read(const char *path, char *buf, size_t size,
                      off_t offset, struct fuse_file_info *fi)
 {
+    // printf("QEMU Get fioc_read: 0x%lx, data[0]: 0x%lx\n", offset, *(long*)buf);
     MemTxResult res = address_space_read(fuse_as, offset,
         MEMTXATTRS_UNSPECIFIED, buf, size);
     // printf("QEMU Get fioc_read: 0x%lx, res: %d, data[0]: 0x%lx\n", offset, res, *(long*)buf);
@@ -93,6 +94,7 @@ static int fioc_read(const char *path, char *buf, size_t size,
 static int fioc_write(const char *path, const char *buf, size_t size,
     off_t offset, struct fuse_file_info *fi)
 {
+    // printf("QEMU Get fioc_write: 0x%lx, data[0]: 0x%lx\n", offset, *(long*)buf);
     MemTxResult res = address_space_write(fuse_as, offset,
         MEMTXATTRS_UNSPECIFIED, buf, size);
     // printf("QEMU Get fioc_write: 0x%lx, res: %d, data[0]: 0x%lx\n", offset, res, *(long*)buf);
