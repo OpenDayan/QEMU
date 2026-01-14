@@ -22,7 +22,7 @@ typedef struct RVTNGV0SoCState {
     RISCVHartArrayState cpus;
     MemoryRegion rom;
     MemoryRegion mailbox;
-    MemoryRegion uram;
+    MemoryRegion uram[RVTNG_MAX_CALC_CORES];
 } RVTNGV0SoCState;
 
 #define TYPE_RVTNG_V0_SOC "rvtng.v0.soc"

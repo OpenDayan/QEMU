@@ -88,17 +88,23 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_MAILBOX].base, &s->mailbox);
 
-    /* URAM */
-    void *uram = frontend_get_shm_ptr("/uram_shm_0");
-    if(uram == NULL) {
-        uram = malloc(1024 * 1024);
+    for(int core_idx = 0; core_idx < num_harts; core_idx ++) {
+        char name[128];
+        /* URAM */
+        snprintf(name, sizeof(name), "/uram_shm_%d", core_idx);
+        void *uram = frontend_get_shm_ptr(name);
+        if(uram == NULL) {
+            uram = malloc(1024 * 1024);
+        }
+        snprintf(name, sizeof(name), "rvtng.v0.uram_%d", core_idx);
+        memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev), name,
+                                memmap[RVTNG_V0_URAM].size, uram
+                                );
+        memory_region_add_subregion(system_memory,
+                                    memmap[RVTNG_V0_URAM].base +
+                                    core_idx * memmap[RVTNG_V0_URAM].size, &s->uram[core_idx]
+                                );
     }
-    memory_region_init_ram_ptr(&s->uram, OBJECT(dev), "rvtng.v0.uram",
-                               memmap[RVTNG_V0_URAM].size, uram
-                            );
-    memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_URAM].base, &s->uram
-                            );
 }
 
 static void rvtng_v0_soc_class_init(ObjectClass *klass, const void *data)

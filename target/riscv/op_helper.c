@@ -20,7 +20,6 @@
 
 #include "qemu/osdep.h"
 #include "hw/riscv/rvtng-intf.h"
-#include "hw/riscv/rvtng_v0.h"
 #include "cpu.h"
 #include "internals.h"
 #include "exec/cputlb.h"
