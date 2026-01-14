@@ -69,8 +69,8 @@ int (*qemu_main)(void) = os_darwin_cfrunloop_main;
 #endif
 
 // Global Intf for inter-call
-extern RVTPackQ_t rvtPackQ;
-extern RVTCommitQ_t rvtCommitQ;
+extern RVTPackQ_t rvtPackQ[RVTNG_MAX_CALC_CORES];
+extern RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
 const int rvtSimBackendEnable = 1;
 
 static int true_main(int argc, char **argv)
@@ -79,8 +79,11 @@ static int true_main(int argc, char **argv)
     long instFd, msgFd;
     pthread_t instServe, msgServe;
     qemu_init(argc, argv);
-    RVTPackQ_init(&rvtPackQ, 32);
-    RVTCommitQ_init(&rvtCommitQ, 32);
+    // Initialize queues for all cores
+    for(int i = 0; i < RVTNG_MAX_CALC_CORES; i++) {
+        RVTPackQ_init(&rvtPackQ[i], 32);
+        RVTCommitQ_init(&rvtCommitQ[i], 32);
+    }
     frontend_init((int*)&msgFd, (int*)&instFd);
     pthread_create(&instServe, NULL, frontend_serve_inst_loop, (void*) instFd);
     pthread_create(&msgServe, NULL, frontend_serve_msg_loop, (void*) msgFd);
@@ -136,7 +139,13 @@ int frontend_dram_write_service(char *buf, size_t size, off_t addr)
 
 // Backend Tensor Instructions API
 int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg) {
-    int ret = RVTPackQ_try_take(&rvtPackQ, pkg);
+    // Validate coreIdx range
+    if(coreIdx < 0 || coreIdx >= RVTNG_MAX_CALC_CORES) {
+        return 0;
+    }
+
+    // Get instruction from the corresponding core's queue
+    int ret = RVTPackQ_try_take(&rvtPackQ[coreIdx], pkg);
     // if(ret) {
         // printf("QEMU: inst fetched: %lx.\n", pkg->inst);
     // }
@@ -144,7 +153,13 @@ int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg) {
 }
 
 int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg) {
-    RVTCommitQ_put(&rvtCommitQ, *pkg);
+    // Validate coreIdx range
+    if(coreIdx < 0 || coreIdx >= RVTNG_MAX_CALC_CORES) {
+        return 0;
+    }
+
+    // Put result into the corresponding core's queue
+    RVTCommitQ_put(&rvtCommitQ[coreIdx], *pkg);
     return 1;
 }
 

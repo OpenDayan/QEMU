@@ -20,6 +20,7 @@
 
 #include "qemu/osdep.h"
 #include "hw/riscv/rvtng-intf.h"
+#include "hw/riscv/rvtng_v0.h"
 #include "cpu.h"
 #include "internals.h"
 #include "exec/cputlb.h"
@@ -781,8 +782,8 @@ done:
     riscv_raise_exception(env, exception, GETPC());
 }
 
-RVTPackQ_t rvtPackQ;
-RVTCommitQ_t rvtCommitQ;
+RVTPackQ_t rvtPackQ[RVTNG_MAX_CALC_CORES];
+RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
 
 extern const int rvtSimBackendEnable;
 // Tensor Instructions helper
@@ -792,12 +793,22 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
                         )
 {
     if(rvtSimBackendEnable) {
+        // Get current CPU core ID
+        CPUState *cpu = env_cpu(env);
+        int core_id = cpu->cpu_index;
+
+        // Validate core ID
+        if(core_id < 0 || core_id >= RVTNG_MAX_CALC_CORES) {
+            printf("Error: Invalid core_id %d\n", core_id);
+            return rd;
+        }
+
         // Issue Instructions
         rvt_pack_t rvt_inst;
         rvt_inst.inst = inst; rvt_inst.rd = rd;
         rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
         rvt_inst.timestamp = 0; // No Performance simulation.
-        RVTPackQ_put(&rvtPackQ, rvt_inst);
+        RVTPackQ_put(&rvtPackQ[core_id], rvt_inst);
         // check if need write
         uint8_t rdIdx = (inst >> 7) & 0x1f;
         if((inst & 0b11110000000000000100000000000000) == 0b0000000000000000100000000000000 &&
@@ -807,15 +818,15 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
             cmt.rd = 0;
             while(cmt.rd == 0) {
                 // Filiter All Unneeded Commit.
-                cmt = RVTCommitQ_take(&rvtCommitQ);
+                cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
             }
             if(cmt.rd != rdIdx) {
-                printf("Got miss matched RVTCommit, Expect: R%d, Got: R%ld!\n", rdIdx, cmt.rd);
+                printf("Core %d: Got miss matched RVTCommit, Expect: R%d, Got: R%ld!\n", core_id, rdIdx, cmt.rd);
             }
             target_ulong ret = cmt.data;
             // Scoreboard
             if(ret && (inst & 0b00001000000000000000000000000000) == 0b00001000000000000000000000000000) {
-                printf("Got SB Instruction @%lu Cycle\n", cmt.timestamp);
+                printf("Core %d: Got SB Instruction @%lu Cycle\n", core_id, cmt.timestamp);
             }
             return ret;
         } else {
@@ -834,16 +845,26 @@ target_ulong helper_tx64_all(CPURISCVState *env, target_ulong rs1,
                         )
 {
     if(rvtSimBackendEnable) {
+        // Get current CPU core ID
+        CPUState *cpu = env_cpu(env);
+        int core_id = cpu->cpu_index;
+
+        // Validate core ID
+        if(core_id < 0 || core_id >= RVTNG_MAX_CALC_CORES) {
+            printf("Error: Invalid core_id %d\n", core_id);
+            return rd;
+        }
+
         // Issue Instructions
         rvt_pack_t rvt_inst;
         rvt_inst.inst = inst; rvt_inst.rd = rs3;
         rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
         rvt_inst.timestamp = 0; // No Performance simulation.
-        RVTPackQ_put(&rvtPackQ, rvt_inst);
+        RVTPackQ_put(&rvtPackQ[core_id], rvt_inst);
         // check if need write
         if((inst & 0b111110000000) != 0) {
             // need write
-            rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ);
+            rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
             target_ulong ret = cmt.data;
             return ret;
         } else {

@@ -12,8 +12,7 @@
 
 #include "hw/boards.h"
 #include "hw/riscv/riscv_hart.h"
-
-#define RVTNG_MAX_CALC_CORES 1
+#include "hw/riscv/rvtng-intf.h"
 
 typedef struct RVTNGV0SoCState {
     /*< private >*/

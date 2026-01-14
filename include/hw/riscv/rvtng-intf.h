@@ -48,6 +48,10 @@ typedef struct {
 DEFINE_BLOCKING_QUEUE(rvt_pack_t, RVTPackQ)
 DEFINE_BLOCKING_QUEUE(rvt_commit_t, RVTCommitQ)
 
+// Maximum number of NPU cores supported
+// This should match the maximum value supported by rvtng-cmodel (default: 1, max: 8)
+#define RVTNG_MAX_CALC_CORES 8
+
 // Frontend Service API
 int frontend_dram_read_service(char *buf, size_t size, off_t addr);
 int frontend_dram_write_service(char *buf, size_t size, off_t addr);
