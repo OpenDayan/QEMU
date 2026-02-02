@@ -115,10 +115,10 @@ static int fioc_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	if (fioc_file_type(path) != FIOC_ROOT)
 		return -ENOENT;
 
-	filler(buf, ".", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-	filler(buf, "..", NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-	filler(buf, FIOC_NAME C2H_NAME, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
-	filler(buf, FIOC_NAME H2C_NAME, NULL, 0, FUSE_FILL_DIR_DEFAULTS);
+	filler(buf, ".", NULL, 0, 0);
+	filler(buf, "..", NULL, 0, 0);
+	filler(buf, FIOC_NAME C2H_NAME, NULL, 0, 0);
+	filler(buf, FIOC_NAME H2C_NAME, NULL, 0, 0);
 
 	return 0;
 }
