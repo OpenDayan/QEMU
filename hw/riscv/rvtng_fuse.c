@@ -20,31 +20,32 @@
 #define H2C_NAME "h2c_0"
 #define C2H_NAME "c2h_0"
 #define EVENTS_NAME_PREFIX "events_"
+#define AGG_EVENT_ID 0
 
 #define NPU_EVENT_PIPE_MAX 32
 static int event_pipe_read[NPU_EVENT_PIPE_MAX];
 static int event_pipe_write[NPU_EVENT_PIPE_MAX];
 static int event_pipe_initialized;
 
-/* Emit one event token to the per-core host event pipe.
- * Called from the RVTNG INTC SET MMIO handler.
+/* Emit one event token to the aggregated host event pipe.
+ * Core source is decoded by host via xdma0_user INTC STATUS/MAILBOX.
  */
 void rvtng_fuse_emit_event(int core_id, uint32_t value)
 {
-    if (!event_pipe_initialized || core_id < 0 || core_id >= NPU_EVENT_PIPE_MAX) {
+    if (!event_pipe_initialized) {
         fprintf(stderr,
                 "QEMU FUSE EVT: skip emit initialized=%d core=%d value=0x%x\n",
                 event_pipe_initialized, core_id, value);
         return;
     }
-    if (event_pipe_write[core_id] < 0) {
-        fprintf(stderr, "QEMU FUSE EVT: invalid write pipe core=%d\n", core_id);
+    if (event_pipe_write[AGG_EVENT_ID] < 0) {
+        fprintf(stderr, "QEMU FUSE EVT: invalid write pipe agg=%d\n", AGG_EVENT_ID);
         return;
     }
-    ssize_t n = write(event_pipe_write[core_id], &value, sizeof(value));
+    ssize_t n = write(event_pipe_write[AGG_EVENT_ID], &value, sizeof(value));
     fprintf(stderr,
-            "QEMU FUSE EVT: emit core=%d value=0x%x write_ret=%zd errno=%d\n",
-            core_id, value, n, (n < 0) ? errno : 0);
+            "QEMU FUSE EVT: emit core=%d agg=%d value=0x%x write_ret=%zd errno=%d\n",
+            core_id, AGG_EVENT_ID, value, n, (n < 0) ? errno : 0);
     (void)n;
 }
 
@@ -55,7 +56,7 @@ enum
     FIOC_USER,
     FIOC_H2C,
     FIOC_C2H,
-    /* Event files: FIOC_EVENT_0 + core_id (0..31) */
+    /* Event files: only FIOC_EVENT_0 (aggregated vector) */
     FIOC_EVENT_0 = 10,
 };
 
@@ -69,12 +70,8 @@ static int fioc_file_type(const char *path)
         return FIOC_H2C;
     if (strcmp(path, "/" FIOC_NAME C2H_NAME) == 0)
         return FIOC_C2H;
-    if (strncmp(path, "/" FIOC_NAME EVENTS_NAME_PREFIX, sizeof("/" FIOC_NAME EVENTS_NAME_PREFIX) - 1) == 0) {
-        int core_id;
-        if (sscanf(path, "/" FIOC_NAME EVENTS_NAME_PREFIX "%d", &core_id) == 1 &&
-            core_id >= 0 && core_id < NPU_EVENT_PIPE_MAX)
-            return FIOC_EVENT_0 + core_id;
-    }
+    if (strcmp(path, "/" FIOC_NAME EVENTS_NAME_PREFIX "0") == 0)
+        return FIOC_EVENT_0;
     return FIOC_NONE;
 }
 
@@ -145,25 +142,25 @@ static int fioc_read(const char *path, char *buf, size_t size,
     (void)path;
     int ft = (int)fi->fh;
     if (ft >= FIOC_EVENT_0 && ft < FIOC_EVENT_0 + NPU_EVENT_PIPE_MAX) {
-        int core_id = ft - FIOC_EVENT_0;
+        int core_id = AGG_EVENT_ID;
         if (event_pipe_read[core_id] < 0 || size < 4)
             return 0;
         ssize_t n = read(event_pipe_read[core_id], buf, size >= 4 ? 4 : size);
         if (n > 0) {
             uint32_t val = *(uint32_t *)buf;
             fprintf(stderr,
-                    "QEMU FUSE EVT: host read core=%d value=0x%x ret=%zd\n",
+                    "QEMU FUSE EVT: host read agg=%d value=0x%x ret=%zd\n",
                     core_id, val, n);
             return (int)n;
         }
         if (n < 0 && errno == EAGAIN) {
             fprintf(stderr,
-                    "QEMU FUSE EVT: host read core=%d ret=EAGAIN\n",
+                    "QEMU FUSE EVT: host read agg=%d ret=EAGAIN\n",
                     core_id);
             return -EAGAIN;  /* Non-blocking read: no pending event token. */
         }
         fprintf(stderr,
-                "QEMU FUSE EVT: host read core=%d ret=%zd errno=%d\n",
+                "QEMU FUSE EVT: host read agg=%d ret=%zd errno=%d\n",
                 core_id, n, (n < 0) ? errno : 0);
         return 0;
     }
@@ -223,11 +220,7 @@ static int fioc_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	filler(buf, FIOC_NAME USER_NAME, NULL, 0, 0);
 	filler(buf, FIOC_NAME C2H_NAME, NULL, 0, 0);
 	filler(buf, FIOC_NAME H2C_NAME, NULL, 0, 0);
-	for (int i = 0; i < RVTNG_MAX_CALC_CORES; i++) {
-		char name[64];
-		snprintf(name, sizeof(name), FIOC_NAME EVENTS_NAME_PREFIX "%d", i);
-		filler(buf, name, NULL, 0, 0);
-	}
+	filler(buf, FIOC_NAME EVENTS_NAME_PREFIX "0", NULL, 0, 0);
 
 	return 0;
 }
@@ -267,11 +260,11 @@ int fuse_init(void)
         event_pipe_read[i] = -1;
         event_pipe_write[i] = -1;
     }
-    for (int i = 0; i < RVTNG_MAX_CALC_CORES; i++) {
+    {
         int fd[2];
         if (pipe(fd) == 0) {
-            event_pipe_read[i] = fd[0];
-            event_pipe_write[i] = fd[1];
+            event_pipe_read[AGG_EVENT_ID] = fd[0];
+            event_pipe_write[AGG_EVENT_ID] = fd[1];
             /* Keep event reads non-blocking so FUSE thread never stalls on empty pipe. */
             (void)fcntl(fd[0], F_SETFL, fcntl(fd[0], F_GETFL) | O_NONBLOCK);
         }
