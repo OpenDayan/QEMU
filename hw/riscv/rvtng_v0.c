@@ -35,6 +35,7 @@
 #include "hw/riscv/boot.h"
 #include "hw/riscv/rvtng_v0.h"
 #include "hw/riscv/rvtng-intf.h"
+#include "hw/riscv/rvtng_fuse.h"
 #include "hw/riscv/riscv_hart.h"
 #include "system/system.h"
 
@@ -44,6 +45,101 @@ static const MemMapEntry rvtng_v0_memap[] = {
     [RVTNG_V0_CLINT]   = {  0x2000000,       0xc0000},
     [RVTNG_V0_URAM]    = { 0x10000000,      0x100000}, // 1MB
     [RVTNG_V0_DRAM]    = { 0x80000000,   0x100000000UL},
+};
+
+static void rvtng_intc_emit_rising_irq(uint32_t prev_status, uint32_t prev_enable,
+                                       uint32_t new_status, uint32_t new_enable)
+{
+    uint32_t prev_irq = prev_status & prev_enable;
+    uint32_t new_irq = new_status & new_enable;
+    uint32_t rising = new_irq & ~prev_irq;
+    for (int i = 0; i < RVTNG_MAX_CALC_CORES && i < RVTNG_INTC_MAILBOX_COUNT; i++) {
+        if (rising & (1u << i)) {
+            printf("QEMU INTC: irq rising core=%d mask=0x%x\n", i, rising);
+            rvtng_fuse_emit_event(i, 1);
+        }
+    }
+}
+
+/* INTC MMIO write bridge:
+ * - xdma0_user and guest MMIO access this region directly
+ * - rising edge on (ENABLE & STATUS) emits one host event token via FUSE
+ */
+static void rvtng_intc_write(void *opaque, hwaddr offset, uint64_t value,
+                             unsigned size)
+{
+    RVTNGV0SoCState *s = (RVTNGV0SoCState *)opaque;
+    uint32_t prev_status = s->intc_status;
+    uint32_t prev_enable = s->intc_enable;
+
+    if (offset == RVTNG_INTC_ENABLE_OFF && size == 4) {
+        s->intc_enable = (uint32_t)value;
+        printf("QEMU INTC: write ENABLE=0x%x\n", s->intc_enable);
+    } else if (offset == RVTNG_INTC_SET_OFF && size == 4) {
+        s->intc_status |= (uint32_t)value;
+        printf("QEMU INTC: write SET mask=0x%x new_status=0x%x\n",
+               (uint32_t)value, s->intc_status);
+    } else if (offset == RVTNG_INTC_CLEAR_OFF && size == 4) {
+        s->intc_status &= ~((uint32_t)value);
+        printf("QEMU INTC: write CLEAR mask=0x%x new_status=0x%x\n",
+               (uint32_t)value, s->intc_status);
+    } else if (offset >= RVTNG_INTC_MAILBOX0_OFF &&
+               offset < RVTNG_INTC_MAILBOX0_OFF + RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t)) {
+        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
+        uint32_t idx = (uint32_t)(rel / sizeof(uint64_t));
+        uint32_t pos = (uint32_t)(rel % sizeof(uint64_t));
+        if (size == 8 && pos == 0) {
+            s->intc_mailbox[idx] = value;
+        } else if (size == 4 && (pos == 0 || pos == 4)) {
+            uint64_t old = s->intc_mailbox[idx];
+            if (pos == 0) {
+                s->intc_mailbox[idx] = (old & 0xffffffff00000000ULL) | (value & 0xffffffffULL);
+            } else {
+                s->intc_mailbox[idx] = (old & 0x00000000ffffffffULL) | ((value & 0xffffffffULL) << 32);
+            }
+        } else {
+            printf("QEMU INTC: invalid mailbox write offset=0x%lx size=%u\n",
+                   (unsigned long)offset, size);
+            return;
+        }
+    } else {
+        printf("QEMU INTC: ignored write offset=0x%lx size=%u value=0x%lx\n",
+               (unsigned long)offset, size, (unsigned long)value);
+        return;
+    }
+
+    rvtng_intc_emit_rising_irq(prev_status, prev_enable, s->intc_status, s->intc_enable);
+}
+
+static uint64_t rvtng_intc_read(void *opaque, hwaddr offset, unsigned size)
+{
+    RVTNGV0SoCState *s = (RVTNGV0SoCState *)opaque;
+    if (offset == RVTNG_INTC_STATUS_OFF && size == 4) {
+        return s->intc_status;
+    }
+    if (offset == RVTNG_INTC_ENABLE_OFF && size == 4) {
+        return s->intc_enable;
+    }
+    if (offset >= RVTNG_INTC_MAILBOX0_OFF &&
+        offset < RVTNG_INTC_MAILBOX0_OFF + RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t)) {
+        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
+        uint32_t idx = (uint32_t)(rel / sizeof(uint64_t));
+        uint32_t pos = (uint32_t)(rel % sizeof(uint64_t));
+        if (size == 8 && pos == 0) {
+            return s->intc_mailbox[idx];
+        }
+        if (size == 4 && (pos == 0 || pos == 4)) {
+            return (s->intc_mailbox[idx] >> (pos * 8)) & 0xffffffffULL;
+        }
+    }
+    return 0;
+}
+
+static const MemoryRegionOps rvtng_intc_ops = {
+    .read = rvtng_intc_read,
+    .write = rvtng_intc_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 4, .max_access_size = 8 },
 };
 
 // Global Intf for inter-call
@@ -87,6 +183,17 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
                            memmap[RVTNG_V0_MAILBOX].size, &error_fatal);
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_MAILBOX].base, &s->mailbox);
+
+    s->intc_status = 0;
+    s->intc_enable = 0;
+    memset(s->intc_mailbox, 0, sizeof(s->intc_mailbox));
+
+    /* INTC window for NPU->host interrupt signaling and xdma0_user MMIO view. */
+    memory_region_init_io(&s->intc, OBJECT(dev), &rvtng_intc_ops, s,
+                         "rvtng.v0.intc", RVTNG_INTC_SIZE);
+    memory_region_add_subregion(system_memory, RVTNG_INTC_BASE, &s->intc);
+    printf("QEMU INTC: mapped base=0x%lx size=0x%lx\n",
+           (unsigned long)RVTNG_INTC_BASE, (unsigned long)RVTNG_INTC_SIZE);
 
     for(int core_idx = 0; core_idx < num_harts; core_idx ++) {
         char name[128];

@@ -22,6 +22,10 @@ typedef struct RVTNGV0SoCState {
     RISCVHartArrayState cpus;
     MemoryRegion rom;
     MemoryRegion mailbox;
+    MemoryRegion intc;  /* NPU interrupt controller (device→host events) at 0x2000 */
+    uint32_t intc_status;
+    uint32_t intc_enable;
+    uint64_t intc_mailbox[32];
     MemoryRegion uram[RVTNG_MAX_CALC_CORES];
 } RVTNGV0SoCState;
 
