@@ -1292,4 +1292,4 @@ DEF_HELPER_1(ssamoswap_disabled, void, env)
 
 /* Tensor instruction helpers */
 DEF_HELPER_5(tx_all, tl, env, tl, tl, tl, i32)
-DEF_HELPER_6(tx64_all, tl, env, tl, tl, tl, tl, i64)
+DEF_HELPER_5(tx64_all, void, env, tl, tl, tl, i64)

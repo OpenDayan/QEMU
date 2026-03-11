@@ -808,24 +808,24 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
         rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
         rvt_inst.timestamp = 0; // No Performance simulation.
         RVTPackQ_put(&rvtPackQ[core_id], rvt_inst);
-        // check if need write
-        uint8_t rdIdx = (inst >> 7) & 0x1f;
-        if((inst & 0b11110000000000000100000000000000) == 0b0000000000000000100000000000000 &&
-            rdIdx != 0) {
+        // Check if TCSR Read Instruction
+        if((inst & 0b11111000000000000001000000000000) == 0b00000000000000000001000000000000) {
             // need write
+            uint8_t rdIdx = (inst >> 7) & 0x1f;
             rvt_commit_t cmt;
-            cmt.rd = 0;
-            while(cmt.rd == 0) {
+            // cmt.rd = 0;
+            // while(cmt.rd == 0) {
                 // Filiter All Unneeded Commit.
                 cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
-            }
+            // }
             if(cmt.rd != rdIdx) {
                 printf("Core %d: Got miss matched RVTCommit, Expect: R%d, Got: R%ld!\n", core_id, rdIdx, cmt.rd);
             }
             target_ulong ret = cmt.data;
             // Scoreboard
-            if(ret && (inst & 0b00001000000000000000000000000000) == 0b00001000000000000000000000000000) {
-                printf("Core %d: Got SB Instruction @%lu Cycle\n", core_id, cmt.timestamp);
+            if((inst & 0b11111111111111100000000000000000) == 0b00000000000000000000000000000000) {
+                if(inst & 0b11110000000000000) printf("Core %d: Got SB BAR Instruction @%lu Cycle\n", core_id, cmt.timestamp);
+                else if(ret) printf("Core %d: Got SB GET Instruction @%lu Cycle with ptr 0x%lx\n", core_id, cmt.timestamp, ret);
             }
             return ret;
         } else {
@@ -838,8 +838,8 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
     }
 }
 
-target_ulong helper_tx64_all(CPURISCVState *env, target_ulong rs1,
-                          target_ulong rs2, target_ulong rs3, target_ulong rd,
+void helper_tx64_all(CPURISCVState *env, target_ulong rs1,
+                          target_ulong rs2, target_ulong rd,
                           uint64_t inst
                         )
 {
@@ -851,28 +851,31 @@ target_ulong helper_tx64_all(CPURISCVState *env, target_ulong rs1,
         // Validate core ID
         if(core_id < 0 || core_id >= RVTNG_MAX_CALC_CORES) {
             printf("Error: Invalid core_id %d\n", core_id);
-            return rd;
+            // return rd;
+            return;
         }
 
         // Issue Instructions
         rvt_pack_t rvt_inst;
-        rvt_inst.inst = inst; rvt_inst.rd = rs3;
+        rvt_inst.inst = inst; rvt_inst.rd = rd;
         rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
         rvt_inst.timestamp = 0; // No Performance simulation.
         RVTPackQ_put(&rvtPackQ[core_id], rvt_inst);
         // check if need write
-        if((inst & 0b111110000000) != 0) {
-            // need write
-            rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
-            target_ulong ret = cmt.data;
-            return ret;
-        } else {
-            target_ulong ret = rd;
-            return ret;
-        }
+        // if((inst & 0b111110000000) != 0) {
+        //     // need write
+        //     rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
+        //     target_ulong ret = cmt.data;
+        //     return ret;
+        // } else {
+            // target_ulong ret = rd;
+            // return ret;
+            return;
+        // }
     } else {
-        printf("Tensor Inst:%lx rs1:%lx rs2:%lx rs3: %lx, rd:%lx\n", inst, rs1, rs2, rs3, rd);
-        return rd;
+        printf("Tensor Inst:%lx rs1:%lx rs2:%lx rd:%lx\n", inst, rs1, rs2, rd);
+        // return rd;
+        return;
     }
 }
 
