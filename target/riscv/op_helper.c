@@ -19,6 +19,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/log.h"
 #include "hw/riscv/rvtng-intf.h"
 #include "cpu.h"
 #include "internals.h"
@@ -825,7 +826,9 @@ target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
             target_ulong ret = cmt.data;
             // Scoreboard
             if(ret && (inst & 0b00001000000000000000000000000000) == 0b00001000000000000000000000000000) {
-                printf("Core %d: Got SB Instruction @%lu Cycle\n", core_id, cmt.timestamp);
+                qemu_log_mask(CPU_LOG_TB_VPU,
+                              "Core %d: Got SB Instruction @%lu Cycle\n",
+                              core_id, cmt.timestamp);
             }
             return ret;
         } else {
