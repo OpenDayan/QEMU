@@ -41,8 +41,8 @@
 static const MemMapEntry rvtng_v0_memap[] = {
     [RVTNG_V0_MAILBOX] = {     0x1000,        0x1000},
     [RVTNG_V0_ROM]     = {    0x10000,        0x1000},
-    [RVTNG_V0_CLINT]   = {  0x2000000,       0xc0000},
-    [RVTNG_V0_URAM]    = { 0x10000000,      0x100000}, // 1MB
+    [RVTNG_V0_CLINT]   = {    0x20000,       0x10000},
+    [RVTNG_V0_URAM]    = {   0x800000,      0x100000}, // 1MB
     [RVTNG_V0_DRAM]    = { 0x80000000,   0x100000000UL},
 };
 
