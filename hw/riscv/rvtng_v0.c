@@ -268,7 +268,7 @@ static void rvtng_v0_machine_init(MachineState *machine)
         dram = malloc(1024 * 1024);
     }
     memory_region_init_ram_ptr(&s->dram, OBJECT(machine), "rvtng.dram",
-                               4ul * 1024ul * 1024ul * 1024ul, dram
+                               16ul * 1024ul * 1024ul * 1024ul, dram
                             );
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_DRAM].base, &s->dram
