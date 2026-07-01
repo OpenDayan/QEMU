@@ -72,12 +72,14 @@ int (*qemu_main)(void) = os_darwin_cfrunloop_main;
 extern RVTPackQ_t rvtPackQ[RVTNG_MAX_CALC_CORES];
 extern RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
 const int rvtSimBackendEnable = 1;
+extern int fuse_init(void);
 
 static int true_main(int argc, char **argv)
 {
     ATTRIBUTE_UNUSED int ret = system("umount /tmp/virtual_npu");
     long instFd, msgFd;
     pthread_t instServe, msgServe;
+    fuse_init();
     qemu_init(argc, argv);
     // Initialize queues for all cores
     for(int i = 0; i < RVTNG_MAX_CALC_CORES; i++) {
@@ -202,9 +204,11 @@ int main(int argc, char **argv) {
         close(log_fd);
         exit(EXIT_FAILURE);
     }
+    if (dup2(log_fd, STDERR_FILENO) == -1) {
+        close(log_fd);
+        exit(EXIT_FAILURE);
+    }
     close(log_fd);
     close(STDIN_FILENO);
-    close(STDERR_FILENO);
     return true_main(argc, argv);
 }
-

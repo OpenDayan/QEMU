@@ -249,7 +249,12 @@ static void* child_func(void *arg)
     sigaddset(&mask, SIGBUS);
     sigaddset(&mask, SIGTRAP);
     pthread_sigmask(SIG_SETMASK, &mask, NULL);
-    fuse_main(4, fuse_args, &fioc_oper, NULL);
+    errno = 0;
+    int ret = fuse_main(4, fuse_args, &fioc_oper, NULL);
+    if (ret) {
+        fprintf(stderr, "QEMU FUSE: fuse_main returned %d errno=%d (%s)\n",
+                ret, errno, strerror(errno));
+    }
     return NULL;
 }
 
