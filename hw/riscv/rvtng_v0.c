@@ -283,7 +283,6 @@ static void rvtng_v0_machine_init(MachineState *machine)
         exit(1);
     }
 
-    /* FUSE hook is initialized by the dl launcher before qemu_init(). */
 }
 
 static void rvtng_v0_machine_class_init(ObjectClass *klass, const void *data)
