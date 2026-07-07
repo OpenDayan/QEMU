@@ -43,6 +43,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
+extern int fuse_loop_main(void);
+
 static void *qemu_default_main(void *opaque)
 {
     int status;
@@ -55,6 +57,13 @@ static void *qemu_default_main(void *opaque)
     replay_mutex_unlock();
 
     exit(status);
+}
+
+static void *fuse_loop_thread_main(void *opaque)
+{
+    (void)opaque;
+    fuse_loop_main();
+    return NULL;
 }
 
 int (*qemu_main)(void);
@@ -71,13 +80,21 @@ int (*qemu_main)(void) = os_darwin_cfrunloop_main;
 // Global Intf for inter-call
 extern RVTPackQ_t rvtPackQ[RVTNG_MAX_CALC_CORES];
 extern RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
+extern int fuse_init(void);
+extern int fuse_prepare_mount(void);
 const int rvtSimBackendEnable = 1;
 
 static int true_main(int argc, char **argv)
 {
     ATTRIBUTE_UNUSED int ret = system("umount /tmp/virtual_npu");
+    bool use_fuse_loop = qemu_main == NULL;
     long instFd, msgFd;
     pthread_t instServe, msgServe;
+
+    if (use_fuse_loop && fuse_prepare_mount() != 0) {
+        return 1;
+    }
+
     qemu_init(argc, argv);
     // Initialize queues for all cores
     for(int i = 0; i < RVTNG_MAX_CALC_CORES; i++) {
@@ -108,6 +125,9 @@ static int true_main(int argc, char **argv)
                            qemu_default_main, NULL, QEMU_THREAD_DETACHED);
         return qemu_main();
     } else {
+        pthread_t fuseLoop;
+        pthread_create(&fuseLoop, NULL, fuse_loop_thread_main, NULL);
+        pthread_detach(fuseLoop);
         qemu_default_main(NULL);
         g_assert_not_reached();
     }
@@ -194,7 +214,11 @@ int main(int argc, char **argv) {
         exit(EXIT_SUCCESS);
     }
     umask(0);
-    int log_fd = open(".emu_log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const char *log_path = getenv("RVTNG_QEMU_LOG");
+    if (log_path == NULL || log_path[0] == '\0') {
+        log_path = ".emu_log";
+    }
+    int log_fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (log_fd == -1) {
         exit(EXIT_FAILURE);
     }
@@ -203,8 +227,9 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
     close(log_fd);
+    if (dup2(STDOUT_FILENO, STDERR_FILENO) == -1) {
+        exit(EXIT_FAILURE);
+    }
     close(STDIN_FILENO);
-    close(STDERR_FILENO);
     return true_main(argc, argv);
 }
-

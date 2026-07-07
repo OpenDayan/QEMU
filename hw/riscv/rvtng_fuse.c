@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include "qemu/main-loop.h"
 #include "system/memory.h"
 #include "hw/riscv/rvtng-intf.h"
 #include "hw/riscv/rvtng_fuse.h"
@@ -7,6 +8,7 @@
 #define FUSE_USE_VERSION 35
 
 #include <fuse.h>
+#include <fuse_lowlevel.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -139,7 +141,6 @@ extern AddressSpace *fuse_as;
 static int fioc_read(const char *path, char *buf, size_t size,
                      off_t offset, struct fuse_file_info *fi)
 {
-    (void)path;
     int ft = (int)fi->fh;
     if (ft >= FIOC_EVENT_0 && ft < FIOC_EVENT_0 + NPU_EVENT_PIPE_MAX) {
         int core_id = AGG_EVENT_ID;
@@ -173,10 +174,20 @@ static int fioc_read(const char *path, char *buf, size_t size,
         addr = RVTNG_INTC_BASE + (hwaddr)offset;
     }
 
+    /* address_space_read may dispatch to device MMIO (e.g. the rvtng INTC),
+     * whose handlers mutate shared IRQ state and raise CPU interrupts. Like any
+     * QEMU device access from a non-vCPU thread, this must hold the BQL, or it
+     * races with the vCPU's interrupt handling and deadlocks on the BQL. */
+    bql_lock();
     MemTxResult res = address_space_read(fuse_as, addr,
         MEMTXATTRS_UNSPECIFIED, buf, size);
+    bql_unlock();
     if(res) {
-        printf("fioc read error: %d.\n", res);
+        fprintf(stderr,
+                "fioc read error: res=%d path=%s offset=0x%llx addr=0x%llx size=%zu\n",
+                res, path, (unsigned long long)offset,
+                (unsigned long long)addr, size);
+        return -EIO;
     }
     return size;
 }
@@ -184,7 +195,6 @@ static int fioc_read(const char *path, char *buf, size_t size,
 static int fioc_write(const char *path, const char *buf, size_t size,
     off_t offset, struct fuse_file_info *fi)
 {
-    (void)path;
     int ft = (int)fi->fh;
     hwaddr addr = (hwaddr)offset;
     if (ft == FIOC_USER) {
@@ -195,11 +205,21 @@ static int fioc_write(const char *path, const char *buf, size_t size,
     }
 
     // printf("QEMU Get fioc_write: 0x%lx, data[0]: 0x%lx\n", offset, *(long*)buf);
+    /* Hold the BQL: a write to the INTC MMIO window runs rvtng_intc_write(),
+     * which updates shared interrupt state and raises IRQs to the vCPU. Doing
+     * that lock-free from the FUSE thread races the vCPU's cpu_handle_interrupt
+     * path and intermittently deadlocks the machine on the BQL. */
+    bql_lock();
     MemTxResult res = address_space_write(fuse_as, addr,
         MEMTXATTRS_UNSPECIFIED, buf, size);
+    bql_unlock();
     // printf("QEMU Get fioc_write: 0x%lx, res: %d, data[0]: 0x%lx\n", offset, res, *(long*)buf);
     if(res) {
-        printf("fioc write error: %d.\n", res);
+        fprintf(stderr,
+                "fioc write error: res=%d path=%s offset=0x%llx addr=0x%llx size=%zu\n",
+                res, path, (unsigned long long)offset,
+                (unsigned long long)addr, size);
+        return -EIO;
     }
 	return size;
 }
@@ -232,30 +252,22 @@ static const struct fuse_operations fioc_oper = {
 	.read		= fioc_read,
 	.write		= fioc_write,
 };
-static char *fuse_args[] = {
+static char *fuse_argv[] = {
     (char*)"./nemu-fuse",
     (char*)"-s",
     (char*)"-f",
     (char*)"/tmp/virtual_npu/",
     NULL};
 
-/* FUSE service thread */
-static void* child_func(void *arg)
-{
-    printf("QEMU: Child Thread.\n");
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGVTALRM);
-    sigaddset(&mask, SIGBUS);
-    sigaddset(&mask, SIGTRAP);
-    pthread_sigmask(SIG_SETMASK, &mask, NULL);
-    fuse_main(4, fuse_args, &fioc_oper, NULL);
-    return NULL;
-}
+static struct fuse *fioc_fuse;
+static char *fioc_mountpoint;
 
-int fuse_init(void);
-int fuse_init(void)
+static void fuse_event_pipes_init(void)
 {
+    if (event_pipe_initialized) {
+        return;
+    }
+
     for (int i = 0; i < NPU_EVENT_PIPE_MAX; i++) {
         event_pipe_read[i] = -1;
         event_pipe_write[i] = -1;
@@ -270,25 +282,91 @@ int fuse_init(void)
         }
     }
     event_pipe_initialized = 1;
+}
 
-    pthread_t fuse_id;
-    int ret = pthread_create(&fuse_id, NULL, child_func, NULL);
-    if (ret == -1)
-    {
-        perror("pthread_create for FUSE thread fail!");
+int fuse_prepare_mount(void);
+int fuse_prepare_mount(void)
+{
+    struct fuse_args args = FUSE_ARGS_INIT(4, fuse_argv);
+    struct fuse_cmdline_opts opts;
+    int rc;
+
+    if (fioc_fuse != NULL) {
+        return 0;
+    }
+
+    fuse_event_pipes_init();
+
+    memset(&opts, 0, sizeof(opts));
+    rc = fuse_parse_cmdline(&args, &opts);
+    if (rc != 0 || opts.mountpoint == NULL) {
+        fprintf(stderr, "QEMU: fuse_parse_cmdline failed rc=%d\n", rc);
+        fuse_opt_free_args(&args);
+        free(opts.mountpoint);
+        return -1;
+    }
+
+    fioc_fuse = fuse_new(&args, &fioc_oper, sizeof(fioc_oper), NULL);
+    fuse_opt_free_args(&args);
+    if (fioc_fuse == NULL) {
+        fprintf(stderr, "QEMU: fuse_new failed\n");
+        free(opts.mountpoint);
+        return -1;
+    }
+
+    errno = 0;
+    rc = fuse_mount(fioc_fuse, opts.mountpoint);
+    if (rc != 0) {
+        int saved_errno = errno;
+        fprintf(stderr, "QEMU: fuse_mount failed rc=%d errno=%d (%s)\n",
+                rc, saved_errno, strerror(saved_errno));
+        fuse_destroy(fioc_fuse);
+        fioc_fuse = NULL;
+        free(opts.mountpoint);
+        return -1;
+    }
+
+    fioc_mountpoint = opts.mountpoint;
+    return 0;
+}
+
+int fuse_loop_main(void);
+int fuse_loop_main(void)
+{
+    if (fioc_fuse == NULL && fuse_prepare_mount() != 0) {
         exit(EXIT_FAILURE);
     }
+
     sigset_t mask;
     sigemptyset(&mask);
-    sigaddset(&mask, SIGHUP);
-    sigaddset(&mask, SIGINT);
-    sigaddset(&mask, SIGTERM);
-    sigaddset(&mask, SIGPIPE);
-    sigaddset(&mask, SIGILL);
-    sigaddset(&mask, SIGABRT);
-    sigaddset(&mask, SIGFPE);
-    sigaddset(&mask, SIGSEGV);
+    sigaddset(&mask, SIGVTALRM);
+    sigaddset(&mask, SIGBUS);
+    sigaddset(&mask, SIGTRAP);
     pthread_sigmask(SIG_SETMASK, &mask, NULL);
-    printf("QEMU: Host Thread.\n");
-    return 0;
+    printf("QEMU: FUSE Loop Main Thread.\n");
+
+    errno = 0;
+    int rc = fuse_loop(fioc_fuse);
+    if (rc != 0) {
+        int saved_errno = errno;
+        fprintf(stderr, "QEMU: fuse_loop failed rc=%d errno=%d (%s)\n",
+                rc, saved_errno, strerror(saved_errno));
+        exit(EXIT_FAILURE);
+    }
+
+    fuse_unmount(fioc_fuse);
+    fuse_destroy(fioc_fuse);
+    fioc_fuse = NULL;
+    free(fioc_mountpoint);
+    fioc_mountpoint = NULL;
+    return rc;
+}
+
+int fuse_init(void);
+int fuse_init(void)
+{
+    if (fuse_prepare_mount() != 0) {
+        exit(EXIT_FAILURE);
+    }
+    return fuse_loop_main();
 }

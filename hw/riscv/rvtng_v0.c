@@ -283,8 +283,6 @@ static void rvtng_v0_machine_init(MachineState *machine)
         exit(1);
     }
 
-    /* Init Fuse Hook */
-    fuse_init();
 }
 
 static void rvtng_v0_machine_class_init(ObjectClass *klass, const void *data)
