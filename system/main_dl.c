@@ -88,7 +88,8 @@ static int true_main(int argc, char **argv)
 {
     ATTRIBUTE_UNUSED int ret = system("umount /tmp/virtual_npu");
     bool use_fuse_loop = qemu_main == NULL;
-    long instFd, msgFd;
+    long instReqFd, instRspFd, msgFd;
+    rvt_inst_socket_pair_t instSockets;
     pthread_t instServe, msgServe;
 
     if (use_fuse_loop && fuse_prepare_mount() != 0) {
@@ -101,8 +102,10 @@ static int true_main(int argc, char **argv)
         RVTPackQ_init(&rvtPackQ[i], 32);
         RVTCommitQ_init(&rvtCommitQ[i], 32);
     }
-    frontend_init((int*)&msgFd, (int*)&instFd);
-    pthread_create(&instServe, NULL, frontend_serve_inst_loop, (void*) instFd);
+    frontend_init((int*)&msgFd, (int*)&instReqFd, (int*)&instRspFd);
+    instSockets.fdReq = (int)instReqFd;
+    instSockets.fdRsp = (int)instRspFd;
+    pthread_create(&instServe, NULL, frontend_serve_inst_loop, &instSockets);
     pthread_create(&msgServe, NULL, frontend_serve_msg_loop, (void*) msgFd);
 
     /*
