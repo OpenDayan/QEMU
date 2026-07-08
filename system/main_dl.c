@@ -83,7 +83,6 @@ extern RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
 extern int fuse_init(void);
 extern int fuse_prepare_mount(void);
 const int rvtSimBackendEnable = 1;
-extern int fuse_init(void);
 
 static int true_main(int argc, char **argv)
 {
