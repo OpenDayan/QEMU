@@ -88,9 +88,11 @@ static int true_main(int argc, char **argv)
 {
     ATTRIBUTE_UNUSED int ret = system("umount /tmp/virtual_npu");
     bool use_fuse_loop = qemu_main == NULL;
-    long instReqFd, instRspFd, msgFd;
+    int instReqFd, instRspFd, msgFd;
     rvt_inst_socket_pair_t instSockets;
+    rvt_msg_socket_t msgSocket;
     pthread_t instServe, msgServe;
+    int thread_error;
 
     if (use_fuse_loop && fuse_prepare_mount() != 0) {
         return 1;
@@ -102,11 +104,28 @@ static int true_main(int argc, char **argv)
         RVTPackQ_init(&rvtPackQ[i], 32);
         RVTCommitQ_init(&rvtCommitQ[i], 32);
     }
-    frontend_init((int*)&msgFd, (int*)&instReqFd, (int*)&instRspFd);
-    instSockets.fdReq = (int)instReqFd;
-    instSockets.fdRsp = (int)instRspFd;
-    pthread_create(&instServe, NULL, frontend_serve_inst_loop, &instSockets);
-    pthread_create(&msgServe, NULL, frontend_serve_msg_loop, (void*) msgFd);
+    frontend_init(&msgFd, &instReqFd, &instRspFd);
+    instSockets.fdReq = instReqFd;
+    instSockets.fdRsp = instRspFd;
+    msgSocket.fd = msgFd;
+    thread_error = pthread_create(&instServe, NULL,
+                                  frontend_serve_inst_loop, &instSockets);
+    if (thread_error != 0) {
+        fprintf(stderr, "QEMU: failed to create instruction IPC thread: %s\n",
+                strerror(thread_error));
+        return 1;
+    }
+    thread_error = pthread_create(&msgServe, NULL,
+                                  frontend_serve_msg_loop, &msgSocket);
+    if (thread_error != 0) {
+        fprintf(stderr, "QEMU: failed to create message IPC thread: %s\n",
+                strerror(thread_error));
+        pthread_cancel(instServe);
+        pthread_join(instServe, NULL);
+        return 1;
+    }
+    pthread_detach(instServe);
+    pthread_detach(msgServe);
 
     /*
      * qemu_init acquires the BQL and replay mutex lock. BQL is acquired when
@@ -193,50 +212,51 @@ int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg) {
 #include <stdlib.h>
 #include <fcntl.h>
 
-int main(int argc, char **argv) {
-    pid_t pid = fork();
-    
-    if (pid == -1) {
-        perror("fork failed");
-        return 1;
-    }
-    
-    if (pid > 0) {
+static int redirect_qemu_log(void)
+{
+    const char *log_path = getenv("RVTNG_QEMU_LOG");
+
+    if (log_path == NULL || log_path[0] == '\0') {
         return 0;
     }
-    if (setsid() == -1) {
-        perror("setsid failed");
-        exit(EXIT_FAILURE);
-    }
-    pid = fork();
-    if (pid == -1) {
-        perror("second fork failed");
-        exit(EXIT_FAILURE);
-    }
-    if (pid > 0) {
-        exit(EXIT_SUCCESS);
-    }
-    umask(0);
-    const char *log_path = getenv("RVTNG_QEMU_LOG");
-    if (log_path == NULL || log_path[0] == '\0') {
-        log_path = ".emu_log";
-    }
+
     int log_fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (log_fd == -1) {
-        exit(EXIT_FAILURE);
+        fprintf(stderr, "QEMU: cannot open RVTNG_QEMU_LOG '%s': %s\n",
+                log_path, strerror(errno));
+        return -1;
     }
     if (dup2(log_fd, STDOUT_FILENO) == -1) {
-        close(log_fd);
-        exit(EXIT_FAILURE);
+        int saved_errno = errno;
+        if (log_fd > STDERR_FILENO) {
+            close(log_fd);
+        }
+        fprintf(stderr, "QEMU: cannot redirect stdout to '%s': %s\n",
+                log_path, strerror(saved_errno));
+        return -1;
     }
     if (dup2(log_fd, STDERR_FILENO) == -1) {
+        int saved_errno = errno;
+        if (log_fd > STDERR_FILENO) {
+            close(log_fd);
+        }
+        fprintf(stderr, "QEMU: cannot redirect stderr to '%s': %s\n",
+                log_path, strerror(saved_errno));
+        return -1;
+    }
+    if (log_fd > STDERR_FILENO) {
         close(log_fd);
-        exit(EXIT_FAILURE);
     }
-    close(log_fd);
-    if (dup2(STDOUT_FILENO, STDERR_FILENO) == -1) {
-        exit(EXIT_FAILURE);
+
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    umask(0);
+    if (redirect_qemu_log() != 0) {
+        return EXIT_FAILURE;
     }
-    close(STDIN_FILENO);
+
     return true_main(argc, argv);
 }
