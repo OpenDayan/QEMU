@@ -50,6 +50,10 @@ tests = {
   'test-fifo': [],
 }
 
+if host_os != 'windows'
+  tests += {'test-rvtng-ipc-channel': []}
+endif
+
 if have_system or have_tools
   tests += {
     'test-qmp-event': [testqapi],
