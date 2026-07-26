@@ -29,15 +29,17 @@ static int event_pipe_read[NPU_EVENT_PIPE_MAX];
 static int event_pipe_write[NPU_EVENT_PIPE_MAX];
 static int event_pipe_initialized;
 
-/* Emit one event token to the aggregated host event pipe.
- * Core source is decoded by host via xdma0_user INTC STATUS/MAILBOX.
+/*
+ * Emit one event token to the aggregated host event pipe.
+ * The source is decoded by the host via xdma0_user STATUS/MAILBOX.
  */
-void rvtng_fuse_emit_event(int core_id, uint32_t value)
+void rvtng_fuse_emit_event(int source_id, uint32_t value)
 {
     if (!event_pipe_initialized) {
         fprintf(stderr,
-                "QEMU FUSE EVT: skip emit initialized=%d core=%d value=0x%x\n",
-                event_pipe_initialized, core_id, value);
+                "QEMU FUSE EVT: skip emit initialized=%d source=%d "
+                "value=0x%x\n",
+                event_pipe_initialized, source_id, value);
         return;
     }
     if (event_pipe_write[AGG_EVENT_ID] < 0) {
@@ -46,8 +48,9 @@ void rvtng_fuse_emit_event(int core_id, uint32_t value)
     }
     ssize_t n = write(event_pipe_write[AGG_EVENT_ID], &value, sizeof(value));
     fprintf(stderr,
-            "QEMU FUSE EVT: emit core=%d agg=%d value=0x%x write_ret=%zd errno=%d\n",
-            core_id, AGG_EVENT_ID, value, n, (n < 0) ? errno : 0);
+            "QEMU FUSE EVT: emit source=%d agg=%d value=0x%x "
+            "write_ret=%zd errno=%d\n",
+            source_id, AGG_EVENT_ID, value, n, (n < 0) ? errno : 0);
     (void)n;
 }
 

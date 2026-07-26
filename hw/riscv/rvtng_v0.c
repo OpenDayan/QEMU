@@ -1,15 +1,18 @@
 /*
- * Copyright (c) 2025 Institute of Computing Technology, Chinese Academy of Sciences
+ * Copyright (c) 2025 Institute of Computing Technology,
+ * Chinese Academy of Sciences
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Provides a board compatible with the RVTNG-V0 SoC
  * XCVU13P FPGA prototype platform:
  *
- * 0) Mailbox Register
- * 1) Boot Rom (Stage-1)
- * 2) CLINT (Core-Local Interruptor)
- * 3) PCIE XDMA Engine (DMA Copy-In / Copy-Out)
- * 4) DRAM
+ * 0) Mailbox memory
+ * 1) NPU-to-host interrupt handler
+ * 2) Boot ROM (Stage-1)
+ * 3) Dayan CLINT (Core-Local Interruptor)
+ * 4) Atomic-cache backing memory
+ * 5) Per-core tensor URAM
+ * 6) DRAM
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -26,10 +29,10 @@
 
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
+#include "qemu/log.h"
 #include "qapi/error.h"
 #include "system/address-spaces.h"
 #include "hw/boards.h"
-#include "hw/char/serial-mm.h"
 #include "hw/intc/riscv_aclint.h"
 #include "hw/qdev-properties.h"
 #include "hw/riscv/boot.h"
@@ -37,188 +40,544 @@
 #include "hw/riscv/rvtng-intf.h"
 #include "hw/riscv/rvtng_fuse.h"
 #include "hw/riscv/riscv_hart.h"
+#include "system/reset.h"
 #include "system/system.h"
+#include "target/riscv/cpu.h"
 
-static const MemMapEntry rvtng_v0_memap[] = {
-    [RVTNG_V0_MAILBOX] = {     0x1000,        0x1000},
-    [RVTNG_V0_ROM]     = {    0x10000,        0x1000},
-    [RVTNG_V0_CLINT]   = {    0x20000,       0x10000},
-    [RVTNG_V0_URAM]    = {   0x800000,      0x100000}, // 1MB
-    [RVTNG_V0_DRAM]    = { 0x80000000,   0x100000000UL},
+#define DAYAN_CLINT_IPI_BASE          0x100
+#define DAYAN_CLINT_IPI_HART_SIZE     0x10
+#define DAYAN_CLINT_IPI_STATUS_OFF    0x0
+#define DAYAN_CLINT_IPI_ENABLE_OFF    0x4
+#define DAYAN_CLINT_IPI_PENDING_OFF   0x8
+#define DAYAN_CLINT_IPI_CLEAR_OFF     0xc
+#define DAYAN_CLINT_MTIMECMP_OFF      0x4000
+#define DAYAN_CLINT_MTIME_OFF         0xbff8
+#define DAYAN_CLINT_IPI_APERTURE_SIZE DAYAN_CLINT_MTIMECMP_OFF
+#define DAYAN_CLINT_MTIMER_SIZE       0xc000
+#define DAYAN_CLINT_TIMEBASE_FREQ     1000000
+
+static const MemMapEntry rvtng_v0_memmap[] = {
+    [RVTNG_V0_MAILBOX]           = {     0x1000,        0x1000 },
+    [RVTNG_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
+    [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
+    [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
+    [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
+    [RVTNG_V0_URAM]              = {   0x800000,      0x100000 },
+    [RVTNG_V0_DRAM]              = { 0x80000000, 0x100000000UL },
 };
 
-static void rvtng_intc_emit_rising_irq(uint32_t prev_status, uint32_t prev_enable,
-                                       uint32_t new_status, uint32_t new_enable)
+/*
+ * The debug controller, error device, atomic-cache configuration, MMU, PCU,
+ * and PLIC apertures intentionally remain unassigned until those models are
+ * implemented.
+ */
+
+static void rvtng_intc_emit_rising_irq(uint32_t prev_status,
+                                       uint32_t prev_enable,
+                                       uint32_t new_status,
+                                       uint32_t new_enable)
 {
     uint32_t prev_irq = prev_status & prev_enable;
     uint32_t new_irq = new_status & new_enable;
     uint32_t rising = new_irq & ~prev_irq;
-    for (int i = 0; i < RVTNG_MAX_CALC_CORES && i < RVTNG_INTC_MAILBOX_COUNT; i++) {
+
+    for (int i = 0; i < RVTNG_INTC_MAILBOX_COUNT; i++) {
         if (rising & (1u << i)) {
-            printf("QEMU INTC: irq rising core=%d mask=0x%x\n", i, rising);
             rvtng_fuse_emit_event(i, 1);
         }
     }
 }
 
-/* INTC MMIO write bridge:
- * - xdma0_user and guest MMIO access this region directly
- * - rising edge on (ENABLE & STATUS) emits one host event token via FUSE
+static uint32_t rvtng_intc_ctrl_read(RVTNGV0SoCState *s, hwaddr offset)
+{
+    switch (offset) {
+    case RVTNG_INTC_STATUS_OFF:
+    case RVTNG_INTC_SET_OFF:
+    case RVTNG_INTC_CLEAR_OFF:
+        return s->intc_status;
+    case RVTNG_INTC_ENABLE_OFF:
+    case RVTNG_INTC_ENABLE_SET_OFF:
+    case RVTNG_INTC_ENABLE_CLEAR_OFF:
+        return s->intc_enable;
+    default:
+        return 0;
+    }
+}
+
+static uint8_t rvtng_intc_readb(RVTNGV0SoCState *s, hwaddr offset)
+{
+    hwaddr mailbox_end = RVTNG_INTC_MAILBOX0_OFF +
+                         RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t);
+
+    if (offset < RVTNG_INTC_MAILBOX0_OFF) {
+        hwaddr reg_offset = offset & ~0x3;
+        unsigned shift = (offset & 0x3) * 8;
+
+        return rvtng_intc_ctrl_read(s, reg_offset) >> shift;
+    }
+
+    if (offset < mailbox_end) {
+        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
+        unsigned index = rel / sizeof(uint64_t);
+        unsigned shift = (rel % sizeof(uint64_t)) * 8;
+
+        return s->intc_mailbox[index] >> shift;
+    }
+
+    return 0;
+}
+
+static void rvtng_intc_writeb(RVTNGV0SoCState *s, hwaddr offset,
+                              uint8_t value)
+{
+    hwaddr mailbox_end = RVTNG_INTC_MAILBOX0_OFF +
+                         RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t);
+
+    if (offset < RVTNG_INTC_MAILBOX0_OFF) {
+        hwaddr reg_offset = offset & ~0x3;
+        unsigned shift = (offset & 0x3) * 8;
+        uint32_t bits = (uint32_t)value << shift;
+
+        switch (reg_offset) {
+        case RVTNG_INTC_SET_OFF:
+            s->intc_status |= bits;
+            break;
+        case RVTNG_INTC_CLEAR_OFF:
+            s->intc_status &= ~bits;
+            break;
+        case RVTNG_INTC_ENABLE_SET_OFF:
+            s->intc_enable |= bits;
+            break;
+        case RVTNG_INTC_ENABLE_CLEAR_OFF:
+            s->intc_enable &= ~bits;
+            break;
+        default:
+            /* STATUS and ENABLE are read-only; 0x18-0x1f is reserved. */
+            break;
+        }
+        return;
+    }
+
+    if (offset < mailbox_end) {
+        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
+        unsigned index = rel / sizeof(uint64_t);
+        unsigned shift = (rel % sizeof(uint64_t)) * 8;
+        uint64_t mask = UINT64_C(0xff) << shift;
+
+        s->intc_mailbox[index] = (s->intc_mailbox[index] & ~mask) |
+                                 ((uint64_t)value << shift);
+    }
+}
+
+/*
+ * Interrupt-handler MMIO bridge shared by guest accesses and xdma0_user.
+ * The register layout follows TLInterruptHandler with 32 interrupt sources.
  */
 static void rvtng_intc_write(void *opaque, hwaddr offset, uint64_t value,
                              unsigned size)
 {
-    RVTNGV0SoCState *s = (RVTNGV0SoCState *)opaque;
+    RVTNGV0SoCState *s = opaque;
     uint32_t prev_status = s->intc_status;
     uint32_t prev_enable = s->intc_enable;
 
-    if (offset == RVTNG_INTC_ENABLE_OFF && size == 4) {
-        s->intc_enable = (uint32_t)value;
-        printf("QEMU INTC: write ENABLE=0x%x\n", s->intc_enable);
-    } else if (offset == RVTNG_INTC_SET_OFF && size == 4) {
-        s->intc_status |= (uint32_t)value;
-        printf("QEMU INTC: write SET mask=0x%x new_status=0x%x\n",
-               (uint32_t)value, s->intc_status);
-    } else if (offset == RVTNG_INTC_CLEAR_OFF && size == 4) {
-        s->intc_status &= ~((uint32_t)value);
-        printf("QEMU INTC: write CLEAR mask=0x%x new_status=0x%x\n",
-               (uint32_t)value, s->intc_status);
-    } else if (offset >= RVTNG_INTC_MAILBOX0_OFF &&
-               offset < RVTNG_INTC_MAILBOX0_OFF + RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t)) {
-        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
-        uint32_t idx = (uint32_t)(rel / sizeof(uint64_t));
-        uint32_t pos = (uint32_t)(rel % sizeof(uint64_t));
-        if (size == 8 && pos == 0) {
-            s->intc_mailbox[idx] = value;
-        } else if (size == 4 && (pos == 0 || pos == 4)) {
-            uint64_t old = s->intc_mailbox[idx];
-            if (pos == 0) {
-                s->intc_mailbox[idx] = (old & 0xffffffff00000000ULL) | (value & 0xffffffffULL);
-            } else {
-                s->intc_mailbox[idx] = (old & 0x00000000ffffffffULL) | ((value & 0xffffffffULL) << 32);
-            }
-        } else {
-            printf("QEMU INTC: invalid mailbox write offset=0x%lx size=%u\n",
-                   (unsigned long)offset, size);
-            return;
-        }
-    } else {
-        printf("QEMU INTC: ignored write offset=0x%lx size=%u value=0x%lx\n",
-               (unsigned long)offset, size, (unsigned long)value);
-        return;
+    for (unsigned i = 0; i < size; i++) {
+        rvtng_intc_writeb(s, offset + i, value >> (i * 8));
     }
 
-    rvtng_intc_emit_rising_irq(prev_status, prev_enable, s->intc_status, s->intc_enable);
+    rvtng_intc_emit_rising_irq(prev_status, prev_enable,
+                               s->intc_status, s->intc_enable);
 }
 
 static uint64_t rvtng_intc_read(void *opaque, hwaddr offset, unsigned size)
 {
-    RVTNGV0SoCState *s = (RVTNGV0SoCState *)opaque;
-    if (offset == RVTNG_INTC_STATUS_OFF && size == 4) {
-        return s->intc_status;
+    RVTNGV0SoCState *s = opaque;
+    uint64_t value = 0;
+
+    for (unsigned i = 0; i < size; i++) {
+        value |= (uint64_t)rvtng_intc_readb(s, offset + i) << (i * 8);
     }
-    if (offset == RVTNG_INTC_ENABLE_OFF && size == 4) {
-        return s->intc_enable;
-    }
-    if (offset >= RVTNG_INTC_MAILBOX0_OFF &&
-        offset < RVTNG_INTC_MAILBOX0_OFF + RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t)) {
-        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
-        uint32_t idx = (uint32_t)(rel / sizeof(uint64_t));
-        uint32_t pos = (uint32_t)(rel % sizeof(uint64_t));
-        if (size == 8 && pos == 0) {
-            return s->intc_mailbox[idx];
-        }
-        if (size == 4 && (pos == 0 || pos == 4)) {
-            return (s->intc_mailbox[idx] >> (pos * 8)) & 0xffffffffULL;
-        }
-    }
-    return 0;
+
+    return value;
 }
 
 static const MemoryRegionOps rvtng_intc_ops = {
     .read = rvtng_intc_read,
     .write = rvtng_intc_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
-    .valid = { .min_access_size = 4, .max_access_size = 8 },
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
 };
 
-// Global Intf for inter-call
+static void rvtng_clint_update_msip(RVTNGV0SoCState *s, unsigned hart)
+{
+    bool level = (s->clint_ipi_pending[hart] &
+                  s->clint_ipi_enable[hart]) != 0;
+
+    qemu_set_irq(s->clint_msip_irq[hart], level);
+}
+
+static uint32_t rvtng_clint_ipi_read_reg(RVTNGV0SoCState *s,
+                                         unsigned hart, hwaddr offset)
+{
+    switch (offset) {
+    case DAYAN_CLINT_IPI_STATUS_OFF:
+        return s->clint_ipi_pending[hart] & s->clint_ipi_enable[hart];
+    case DAYAN_CLINT_IPI_ENABLE_OFF:
+        return s->clint_ipi_enable[hart];
+    case DAYAN_CLINT_IPI_PENDING_OFF:
+    case DAYAN_CLINT_IPI_CLEAR_OFF:
+        return s->clint_ipi_pending[hart];
+    default:
+        return 0;
+    }
+}
+
+static uint8_t rvtng_clint_ipi_readb(RVTNGV0SoCState *s, hwaddr offset)
+{
+    if (offset < s->num_harts * sizeof(uint32_t)) {
+        unsigned hart = offset / sizeof(uint32_t);
+        unsigned shift = (offset % sizeof(uint32_t)) * 8;
+        uint32_t status = s->clint_ipi_pending[hart] &
+                          s->clint_ipi_enable[hart];
+
+        return status >> shift;
+    }
+
+    if (offset >= DAYAN_CLINT_IPI_BASE) {
+        hwaddr rel = offset - DAYAN_CLINT_IPI_BASE;
+        unsigned hart = rel / DAYAN_CLINT_IPI_HART_SIZE;
+
+        if (hart < s->num_harts) {
+            hwaddr hart_offset = rel % DAYAN_CLINT_IPI_HART_SIZE;
+            hwaddr reg_offset = hart_offset & ~0x3;
+            unsigned shift = (hart_offset & 0x3) * 8;
+
+            return rvtng_clint_ipi_read_reg(s, hart, reg_offset) >> shift;
+        }
+    }
+
+    return 0;
+}
+
+static void rvtng_clint_ipi_writeb(RVTNGV0SoCState *s, hwaddr offset,
+                                   uint8_t value)
+{
+    if (offset < s->num_harts * sizeof(uint32_t)) {
+        unsigned hart = offset / sizeof(uint32_t);
+
+        /* Only bit 0 of each legacy MSIP alias is writable. */
+        if ((offset & 0x3) == 0) {
+            if (value & 1) {
+                s->clint_ipi_pending[hart] |= 1;
+            } else {
+                s->clint_ipi_pending[hart] = 0;
+            }
+        }
+        return;
+    }
+
+    if (offset >= DAYAN_CLINT_IPI_BASE) {
+        hwaddr rel = offset - DAYAN_CLINT_IPI_BASE;
+        unsigned hart = rel / DAYAN_CLINT_IPI_HART_SIZE;
+
+        if (hart < s->num_harts) {
+            hwaddr hart_offset = rel % DAYAN_CLINT_IPI_HART_SIZE;
+            hwaddr reg_offset = hart_offset & ~0x3;
+            unsigned shift = (hart_offset & 0x3) * 8;
+            uint32_t mask = UINT32_C(0xff) << shift;
+            uint32_t bits = (uint32_t)value << shift;
+
+            switch (reg_offset) {
+            case DAYAN_CLINT_IPI_ENABLE_OFF:
+                s->clint_ipi_enable[hart] =
+                    (s->clint_ipi_enable[hart] & ~mask) | bits | 1;
+                break;
+            case DAYAN_CLINT_IPI_PENDING_OFF:
+                s->clint_ipi_pending[hart] |= bits;
+                break;
+            case DAYAN_CLINT_IPI_CLEAR_OFF:
+                s->clint_ipi_pending[hart] &= ~bits;
+                break;
+            default:
+                /* IPI status is read-only. */
+                break;
+            }
+        }
+    }
+}
+
+static bool rvtng_clint_is_pending_set_byte(RVTNGV0SoCState *s,
+                                             hwaddr offset)
+{
+    hwaddr rel;
+    unsigned hart;
+    hwaddr hart_offset;
+
+    if (offset < DAYAN_CLINT_IPI_BASE) {
+        return false;
+    }
+
+    rel = offset - DAYAN_CLINT_IPI_BASE;
+    hart = rel / DAYAN_CLINT_IPI_HART_SIZE;
+    hart_offset = rel % DAYAN_CLINT_IPI_HART_SIZE;
+    return hart < s->num_harts &&
+           (hart_offset & ~0x3) == DAYAN_CLINT_IPI_PENDING_OFF;
+}
+
+static uint64_t rvtng_clint_ipi_read(void *opaque, hwaddr offset,
+                                     unsigned size)
+{
+    RVTNGV0SoCState *s = opaque;
+    uint64_t value = 0;
+
+    for (unsigned i = 0; i < size; i++) {
+        value |= (uint64_t)rvtng_clint_ipi_readb(s, offset + i) <<
+                 (i * 8);
+    }
+
+    return value;
+}
+
+static void rvtng_clint_ipi_write(void *opaque, hwaddr offset,
+                                  uint64_t value, unsigned size)
+{
+    RVTNGV0SoCState *s = opaque;
+
+    /*
+     * A wide write can cover PENDING/SET and CLEAR together.  Match the RTL
+     * by applying clears first and sets second, so SET wins on overlap.
+     */
+    for (unsigned i = 0; i < size; i++) {
+        if (!rvtng_clint_is_pending_set_byte(s, offset + i)) {
+            rvtng_clint_ipi_writeb(s, offset + i, value >> (i * 8));
+        }
+    }
+    for (unsigned i = 0; i < size; i++) {
+        if (rvtng_clint_is_pending_set_byte(s, offset + i)) {
+            rvtng_clint_ipi_writeb(s, offset + i, value >> (i * 8));
+        }
+    }
+    for (unsigned hart = 0; hart < s->num_harts; hart++) {
+        rvtng_clint_update_msip(s, hart);
+    }
+}
+
+static const MemoryRegionOps rvtng_clint_ipi_ops = {
+    .read = rvtng_clint_ipi_read,
+    .write = rvtng_clint_ipi_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+};
+
+static bool rvtng_clint_connect_harts(RVTNGV0SoCState *s, Error **errp)
+{
+    for (unsigned hart = 0; hart < s->num_harts; hart++) {
+        CPUState *cpu = cpu_by_arch_id(hart);
+
+        if (!cpu) {
+            error_setg(errp, "rvtng-v0 CLINT cannot find hart %u", hart);
+            return false;
+        }
+        if (riscv_cpu_claim_interrupts(RISCV_CPU(cpu), MIP_MSIP) < 0) {
+            error_setg(errp, "rvtng-v0 hart %u MSIP is already claimed", hart);
+            return false;
+        }
+        s->clint_msip_irq[hart] =
+            qdev_get_gpio_in(DEVICE(cpu), IRQ_M_SOFT);
+    }
+
+    return true;
+}
+
+static void rvtng_clint_reset_mtimecmp(RVTNGV0SoCState *s)
+{
+    const MemMapEntry *memmap = rvtng_v0_memmap;
+
+    for (unsigned hart = 0; hart < s->num_harts; hart++) {
+        MemTxResult result;
+        hwaddr address = memmap[RVTNG_V0_CLINT].base +
+                         DAYAN_CLINT_MTIMECMP_OFF +
+                         hart * sizeof(uint64_t);
+
+        address_space_stq_le(&address_space_memory, address, UINT64_MAX,
+                             MEMTXATTRS_UNSPECIFIED, &result);
+        if (result != MEMTX_OK) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "rvtng-v0: failed to reset mtimecmp for hart %u\n",
+                          hart);
+        }
+    }
+}
+
+static void rvtng_v0_soc_reset_hold(Object *obj, ResetType type)
+{
+    RVTNGV0SoCState *s = RVTNG_V0_SOC(obj);
+
+    s->intc_status = 0;
+    s->intc_enable = 0;
+    for (unsigned i = 0; i < RVTNG_INTC_MAILBOX_COUNT; i++) {
+        s->intc_mailbox[i] = 1;
+    }
+
+    for (unsigned hart = 0; hart < RVTNG_MAX_CALC_CORES; hart++) {
+        s->clint_ipi_pending[hart] = 0;
+        s->clint_ipi_enable[hart] = 1;
+        if (hart < s->num_harts && s->clint_msip_irq[hart]) {
+            qemu_irq_lower(s->clint_msip_irq[hart]);
+        }
+    }
+
+    if (s->num_harts) {
+        rvtng_clint_reset_mtimecmp(s);
+    }
+}
+
+/* Global address-space bridge used by the FUSE xdma0_user endpoint. */
 AddressSpace *fuse_as;
 
 static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
     RVTNGV0SoCState *s = RVTNG_V0_SOC(dev);
-    const MemMapEntry *memmap = rvtng_v0_memap;
+    const MemMapEntry *memmap = rvtng_v0_memmap;
     MemoryRegion *system_memory = get_system_memory();
     uint32_t num_harts = ms->smp.cpus;
 
+    if (num_harts > RVTNG_MAX_CALC_CORES) {
+        error_setg(errp, "rvtng-v0 supports at most %u harts",
+                   RVTNG_MAX_CALC_CORES);
+        return;
+    }
+
+    g_assert(memmap[RVTNG_V0_INTERRUPT_HANDLER].base == RVTNG_INTC_BASE);
+    g_assert(memmap[RVTNG_V0_INTERRUPT_HANDLER].size == RVTNG_INTC_SIZE);
+    g_assert(DAYAN_CLINT_MTIMECMP_OFF + DAYAN_CLINT_MTIMER_SIZE ==
+             memmap[RVTNG_V0_CLINT].size);
+    s->num_harts = num_harts;
     fuse_as = &address_space_memory;
 
     qdev_prop_set_uint32(DEVICE(&s->cpus), "num-harts", num_harts);
     qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
     qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type",
                          TYPE_RISCV_CPU_RVTNG_CALC_V0);
-    qdev_prop_set_uint64(DEVICE(&s->cpus), "resetvec", memmap[RVTNG_V0_ROM].base);
-    sysbus_realize(SYS_BUS_DEVICE(&s->cpus), &error_fatal);
+    qdev_prop_set_uint64(DEVICE(&s->cpus), "resetvec",
+                         memmap[RVTNG_V0_ROM].base);
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpus), errp)) {
+        return;
+    }
 
-    /* CLINT */
-    riscv_aclint_swi_create(memmap[RVTNG_V0_CLINT].base,
-                            0, num_harts, false);
+    /* Dayan CLINT IPI registers and software-interrupt outputs. */
+    if (!rvtng_clint_connect_harts(s, errp)) {
+        return;
+    }
+    memory_region_init_io(&s->clint_ipi, OBJECT(dev),
+                          &rvtng_clint_ipi_ops, s, "rvtng.v0.clint.ipi",
+                          DAYAN_CLINT_IPI_APERTURE_SIZE);
+    memory_region_add_subregion(system_memory, memmap[RVTNG_V0_CLINT].base,
+                                &s->clint_ipi);
+
+    /* The standard ACLINT timer backend matches Dayan's timer layout. */
     riscv_aclint_mtimer_create(memmap[RVTNG_V0_CLINT].base +
-                               RISCV_ACLINT_SWI_SIZE,
-                               RISCV_ACLINT_DEFAULT_MTIMER_SIZE,
-                               0, num_harts, RISCV_ACLINT_DEFAULT_MTIMECMP,
-                               RISCV_ACLINT_DEFAULT_MTIME,
-                               1000000, true);
+                               DAYAN_CLINT_MTIMECMP_OFF,
+                               DAYAN_CLINT_MTIMER_SIZE, 0, num_harts, 0,
+                               DAYAN_CLINT_MTIME_OFF -
+                               DAYAN_CLINT_MTIMECMP_OFF,
+                               DAYAN_CLINT_TIMEBASE_FREQ, true);
 
     /* ROM */
-    memory_region_init_rom(&s->rom, OBJECT(dev), "rvtng.v0.rom",
-                           memmap[RVTNG_V0_ROM].size, &error_fatal);
+    if (!memory_region_init_rom(&s->rom, OBJECT(dev), "rvtng.v0.rom",
+                                memmap[RVTNG_V0_ROM].size, errp)) {
+        return;
+    }
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_ROM].base, &s->rom);
 
     /* MAILBOX */
-    memory_region_init_ram(&s->mailbox, OBJECT(dev), "rvtng.v0.mailbox",
-                           memmap[RVTNG_V0_MAILBOX].size, &error_fatal);
+    if (!memory_region_init_ram(&s->mailbox, OBJECT(dev),
+                                "rvtng.v0.mailbox",
+                                memmap[RVTNG_V0_MAILBOX].size, errp)) {
+        return;
+    }
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_MAILBOX].base, &s->mailbox);
 
-    s->intc_status = 0;
-    s->intc_enable = 0;
-    memset(s->intc_mailbox, 0, sizeof(s->intc_mailbox));
-
-    /* INTC window for NPU->host interrupt signaling and xdma0_user MMIO view. */
+    /* NPU-to-host interrupt-handler, also exposed through xdma0_user. */
     memory_region_init_io(&s->intc, OBJECT(dev), &rvtng_intc_ops, s,
-                         "rvtng.v0.intc", RVTNG_INTC_SIZE);
-    memory_region_add_subregion(system_memory, RVTNG_INTC_BASE, &s->intc);
-    printf("QEMU INTC: mapped base=0x%lx size=0x%lx\n",
-           (unsigned long)RVTNG_INTC_BASE, (unsigned long)RVTNG_INTC_SIZE);
+                         "rvtng.v0.interrupt-handler",
+                         memmap[RVTNG_V0_INTERRUPT_HANDLER].size);
+    memory_region_add_subregion(
+        system_memory, memmap[RVTNG_V0_INTERRUPT_HANDLER].base, &s->intc);
 
-    for(int core_idx = 0; core_idx < num_harts; core_idx ++) {
-        char name[128];
-        /* URAM */
-        snprintf(name, sizeof(name), "/uram_shm_%d", core_idx);
-        void *uram = frontend_get_shm_ptr(name);
-        if(uram == NULL) {
-            uram = malloc(1024 * 1024);
-        }
-        snprintf(name, sizeof(name), "rvtng.v0.uram_%d", core_idx);
-        memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev), name,
-                                memmap[RVTNG_V0_URAM].size, uram
-                                );
-        memory_region_add_subregion(system_memory,
-                                    memmap[RVTNG_V0_URAM].base +
-                                    core_idx * memmap[RVTNG_V0_URAM].size, &s->uram[core_idx]
-                                );
+    /* Atomic-cache data window is currently modeled as fixed RAM. */
+    if (!memory_region_init_ram(&s->atomic_cache, OBJECT(dev),
+                                "rvtng.v0.atomic-cache",
+                                memmap[RVTNG_V0_ATOMIC_CACHE].size, errp)) {
+        return;
     }
+    memory_region_add_subregion(system_memory,
+                                memmap[RVTNG_V0_ATOMIC_CACHE].base,
+                                &s->atomic_cache);
+
+    for (unsigned core_idx = 0; core_idx < num_harts; core_idx++) {
+        char shm_name[32];
+        char region_name[32];
+        void *uram;
+
+        snprintf(shm_name, sizeof(shm_name), "/uram_shm_%u", core_idx);
+        uram = frontend_get_shm_ptr(shm_name);
+        snprintf(region_name, sizeof(region_name), "rvtng.v0.uram_%u",
+                 core_idx);
+        if (uram) {
+            memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev),
+                                       region_name,
+                                       memmap[RVTNG_V0_URAM].size, uram);
+        } else if (!memory_region_init_ram(&s->uram[core_idx], OBJECT(dev),
+                                           region_name,
+                                           memmap[RVTNG_V0_URAM].size,
+                                           errp)) {
+            return;
+        }
+        memory_region_add_subregion(
+            system_memory,
+            memmap[RVTNG_V0_URAM].base +
+            core_idx * memmap[RVTNG_V0_URAM].size,
+            &s->uram[core_idx]);
+    }
+
+    rvtng_v0_soc_reset_hold(OBJECT(s), RESET_TYPE_COLD);
+    qemu_register_resettable(OBJECT(dev));
+}
+
+static void rvtng_v0_soc_unrealize(DeviceState *dev)
+{
+    qemu_unregister_resettable(OBJECT(dev));
 }
 
 static void rvtng_v0_soc_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
+    ResettableClass *rc = RESETTABLE_CLASS(klass);
 
+    rc->phases.hold = rvtng_v0_soc_reset_hold;
     dc->realize = rvtng_v0_soc_realize;
+    dc->unrealize = rvtng_v0_soc_unrealize;
     dc->user_creatable = false;
 }
 
@@ -243,46 +602,39 @@ static void rvtng_v0_soc_register_types(void)
 }
 type_init(rvtng_v0_soc_register_types)
 
-extern int fuse_init(void);
 static void rvtng_v0_machine_init(MachineState *machine)
 {
     RVTNGV0State *s = RVTNG_V0_MACHINE(machine);
-    const MemMapEntry *memmap = rvtng_v0_memap;
+    const MemMapEntry *memmap = rvtng_v0_memmap;
     MemoryRegion *system_memory = get_system_memory();
+    void *dram;
 
     /* Initialize SoC */
     object_initialize_child(OBJECT(machine), "soc", &s->soc,
                             TYPE_RVTNG_V0_SOC);
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
-    /* Register RAM */
-    // memory_region_add_subregion(system_memory,
-    //                             memmap[RVTNG_V0_DRAM].base,
-    //                             machine->ram);
-
     /* Shared DRAM */
-    void *dram = frontend_get_shm_ptr("/dram_shm_0");
-    if(dram == NULL) {
+    dram = frontend_get_shm_ptr("/dram_shm_0");
+    if (dram == NULL) {
         error_report("Unable to find shared dram pointer");
-        exit(1);
-        dram = malloc(1024 * 1024);
+        exit(EXIT_FAILURE);
     }
     memory_region_init_ram_ptr(&s->dram, OBJECT(machine), "rvtng.dram",
-                               16ul * 1024ul * 1024ul * 1024ul, dram
-                            );
+                               16UL * 1024 * 1024 * 1024, dram);
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_DRAM].base, &s->dram
-                            );
+                                memmap[RVTNG_V0_DRAM].base, &s->dram);
 
     if (machine->firmware) {
         hwaddr firmware_entry = memmap[RVTNG_V0_ROM].base;
-        riscv_find_and_load_firmware(machine, machine->firmware, &firmware_entry, NULL);
+
+        riscv_find_and_load_firmware(machine, machine->firmware,
+                                     &firmware_entry, NULL);
     } else {
         error_report("Unable to find the stage-0 Bootloader binary \"%s\"",
                      machine->firmware);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
-
 }
 
 static void rvtng_v0_machine_class_init(ObjectClass *klass, const void *data)
