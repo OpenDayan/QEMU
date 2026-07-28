@@ -62,7 +62,7 @@ static const MemMapEntry rvtng_v0_memmap[] = {
     [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
     [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
     [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
-    [RVTNG_V0_URAM]              = {   0x800000,      0x100000 },
+    [RVTNG_V0_URAM]              = {   0x800000,      0x180000 },
     [RVTNG_V0_DRAM]              = { 0x80000000, 0x100000000UL },
 };
 
@@ -530,6 +530,22 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
                                 "rvtng.v0.atomic-cache",
                                 memmap[RVTNG_V0_ATOMIC_CACHE].size, errp)) {
         return;
+    for(int core_idx = 0; core_idx < num_harts; core_idx ++) {
+        char name[128];
+        /* URAM */
+        snprintf(name, sizeof(name), "/uram_shm_%d", core_idx);
+        void *uram = frontend_get_shm_ptr(name);
+        if(uram == NULL) {
+            uram = malloc(memmap[RVTNG_V0_URAM].size);
+        }
+        snprintf(name, sizeof(name), "rvtng.v0.uram_%d", core_idx);
+        memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev), name,
+                                memmap[RVTNG_V0_URAM].size, uram
+                                );
+        memory_region_add_subregion(system_memory,
+                                    memmap[RVTNG_V0_URAM].base +
+                                    core_idx * 2048 * 1024, &s->uram[core_idx]
+                                );
     }
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_ATOMIC_CACHE].base,
