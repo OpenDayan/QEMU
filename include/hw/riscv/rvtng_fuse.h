@@ -21,4 +21,7 @@
  */
 void rvtng_fuse_emit_event(int source_id, uint32_t value);
 
+/* Discard host event counts that belong to the previous machine state. */
+void rvtng_fuse_reset_events(void);
+
 #endif

@@ -430,6 +430,7 @@ static void rvtng_v0_soc_reset_hold(Object *obj, ResetType type)
 {
     RVTNGV0SoCState *s = RVTNG_V0_SOC(obj);
 
+    rvtng_fuse_reset_events();
     s->intc_status = 0;
     s->intc_enable = 0;
     for (unsigned i = 0; i < RVTNG_INTC_MAILBOX_COUNT; i++) {

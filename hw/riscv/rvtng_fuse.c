@@ -4,7 +4,6 @@
 #include "hw/riscv/rvtng-intf.h"
 #include "hw/riscv/rvtng_fuse.h"
 
-#define STACK_SIZE (1ul * 1024 * 1024) // FUSE thread stack size
 #define FUSE_USE_VERSION 35
 
 #include <fuse.h>
@@ -15,43 +14,69 @@
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
-#include <fcntl.h>
+#include <poll.h>
 
 #define FIOC_NAME "xdma0_"
 #define USER_NAME "user"
 #define H2C_NAME "h2c_0"
 #define C2H_NAME "c2h_0"
 #define EVENTS_NAME_PREFIX "events_"
-#define AGG_EVENT_ID 0
 
-#define NPU_EVENT_PIPE_MAX 32
-static int event_pipe_read[NPU_EVENT_PIPE_MAX];
-static int event_pipe_write[NPU_EVENT_PIPE_MAX];
-static int event_pipe_initialized;
+static pthread_mutex_t event_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t event_pending_count;
+static struct fuse_pollhandle *event_poll_handle;
+
+static struct fuse_pollhandle *fioc_take_event_poll_handle(void)
+{
+    struct fuse_pollhandle *ph;
+
+    pthread_mutex_lock(&event_lock);
+    ph = event_poll_handle;
+    event_poll_handle = NULL;
+    pthread_mutex_unlock(&event_lock);
+    return ph;
+}
+
+static void fioc_destroy_poll_handle(struct fuse_pollhandle *ph)
+{
+    if (ph != NULL) {
+        fuse_pollhandle_destroy(ph);
+    }
+}
 
 /*
- * Emit one event token to the aggregated host event pipe.
+ * Accumulate one event in the aggregated host event counter.
  * The source is decoded by the host via xdma0_user STATUS/MAILBOX.
  */
 void rvtng_fuse_emit_event(int source_id, uint32_t value)
 {
-    if (!event_pipe_initialized) {
-        fprintf(stderr,
-                "QEMU FUSE EVT: skip emit initialized=%d source=%d "
-                "value=0x%x\n",
-                event_pipe_initialized, source_id, value);
+    struct fuse_pollhandle *ph;
+
+    if (source_id < 0 || source_id >= RVTNG_INTC_MAILBOX_COUNT || value == 0) {
         return;
     }
-    if (event_pipe_write[AGG_EVENT_ID] < 0) {
-        fprintf(stderr, "QEMU FUSE EVT: invalid write pipe agg=%d\n", AGG_EVENT_ID);
-        return;
+
+    pthread_mutex_lock(&event_lock);
+    if (UINT32_MAX - event_pending_count < value) {
+        event_pending_count = UINT32_MAX;
+    } else {
+        event_pending_count += value;
     }
-    ssize_t n = write(event_pipe_write[AGG_EVENT_ID], &value, sizeof(value));
-    fprintf(stderr,
-            "QEMU FUSE EVT: emit source=%d agg=%d value=0x%x "
-            "write_ret=%zd errno=%d\n",
-            source_id, AGG_EVENT_ID, value, n, (n < 0) ? errno : 0);
-    (void)n;
+    ph = event_poll_handle;
+    event_poll_handle = NULL;
+    pthread_mutex_unlock(&event_lock);
+
+    if (ph != NULL) {
+        fuse_notify_poll(ph);
+        fuse_pollhandle_destroy(ph);
+    }
+}
+
+void rvtng_fuse_reset_events(void)
+{
+    pthread_mutex_lock(&event_lock);
+    event_pending_count = 0;
+    pthread_mutex_unlock(&event_lock);
 }
 
 enum
@@ -110,17 +135,15 @@ static int fioc_getattr(const char *path, struct stat *stbuf,
         stbuf->st_rdev = 10;
         stbuf->st_dev = 10;
         break;
-    default:
-        if (ft >= FIOC_EVENT_0 && ft < FIOC_EVENT_0 + NPU_EVENT_PIPE_MAX) {
-            stbuf->st_mode = S_IFREG | 0666;
-            stbuf->st_nlink = 1;
-            stbuf->st_size = 4;
-            stbuf->st_rdev = 10;
-            stbuf->st_dev = 10;
-        } else {
-            return -ENOENT;
-        }
+    case FIOC_EVENT_0:
+        stbuf->st_mode = S_IFREG | 0666;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = 4;
+        stbuf->st_rdev = 10;
+        stbuf->st_dev = 10;
         break;
+    default:
+        return -ENOENT;
     }
 
     return 0;
@@ -145,28 +168,22 @@ static int fioc_read(const char *path, char *buf, size_t size,
                      off_t offset, struct fuse_file_info *fi)
 {
     int ft = (int)fi->fh;
-    if (ft >= FIOC_EVENT_0 && ft < FIOC_EVENT_0 + NPU_EVENT_PIPE_MAX) {
-        int core_id = AGG_EVENT_ID;
-        if (event_pipe_read[core_id] < 0 || size < 4)
-            return 0;
-        ssize_t n = read(event_pipe_read[core_id], buf, size >= 4 ? 4 : size);
-        if (n > 0) {
-            uint32_t val = *(uint32_t *)buf;
-            fprintf(stderr,
-                    "QEMU FUSE EVT: host read agg=%d value=0x%x ret=%zd\n",
-                    core_id, val, n);
-            return (int)n;
+    if (ft == FIOC_EVENT_0) {
+        uint32_t count;
+
+        if (size < sizeof(count)) {
+            return -EINVAL;
         }
-        if (n < 0 && errno == EAGAIN) {
-            fprintf(stderr,
-                    "QEMU FUSE EVT: host read agg=%d ret=EAGAIN\n",
-                    core_id);
-            return -EAGAIN;  /* Non-blocking read: no pending event token. */
+
+        pthread_mutex_lock(&event_lock);
+        count = event_pending_count;
+        event_pending_count = 0;
+        pthread_mutex_unlock(&event_lock);
+        if (count == 0) {
+            return -EAGAIN;
         }
-        fprintf(stderr,
-                "QEMU FUSE EVT: host read agg=%d ret=%zd errno=%d\n",
-                core_id, n, (n < 0) ? errno : 0);
-        return 0;
+        memcpy(buf, &count, sizeof(count));
+        return sizeof(count);
     }
 
     hwaddr addr = (hwaddr)offset;
@@ -193,6 +210,44 @@ static int fioc_read(const char *path, char *buf, size_t size,
         return -EIO;
     }
     return size;
+}
+
+static int fioc_release(const char *path, struct fuse_file_info *fi)
+{
+    int ft = (int)fi->fh;
+
+    if (ft == FIOC_EVENT_0) {
+        fioc_destroy_poll_handle(fioc_take_event_poll_handle());
+    }
+    return 0;
+}
+
+static int fioc_poll(const char *path, struct fuse_file_info *fi,
+                     struct fuse_pollhandle *ph, unsigned *reventsp)
+{
+    struct fuse_pollhandle *old_ph = NULL;
+    int ft = (int)fi->fh;
+
+    if (ft != FIOC_EVENT_0) {
+        fioc_destroy_poll_handle(ph);
+        *reventsp = POLLIN | POLLOUT;
+        return 0;
+    }
+
+    pthread_mutex_lock(&event_lock);
+    if (event_pending_count != 0) {
+        old_ph = ph;
+        *reventsp = POLLIN;
+    } else {
+        if (ph != NULL && event_poll_handle != ph) {
+            old_ph = event_poll_handle;
+            event_poll_handle = ph;
+        }
+        *reventsp = 0;
+    }
+    pthread_mutex_unlock(&event_lock);
+    fioc_destroy_poll_handle(old_ph);
+    return 0;
 }
 
 static int fioc_write(const char *path, const char *buf, size_t size,
@@ -249,11 +304,13 @@ static int fioc_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 static const struct fuse_operations fioc_oper = {
-	.getattr	= fioc_getattr,
-	.readdir	= fioc_readdir,
-	.open		= fioc_open,
-	.read		= fioc_read,
-	.write		= fioc_write,
+    .getattr = fioc_getattr,
+    .readdir = fioc_readdir,
+    .open = fioc_open,
+    .release = fioc_release,
+    .read = fioc_read,
+    .write = fioc_write,
+    .poll = fioc_poll,
 };
 static char *fuse_argv[] = {
     (char*)"./nemu-fuse",
@@ -265,28 +322,6 @@ static char *fuse_argv[] = {
 static struct fuse *fioc_fuse;
 static char *fioc_mountpoint;
 
-static void fuse_event_pipes_init(void)
-{
-    if (event_pipe_initialized) {
-        return;
-    }
-
-    for (int i = 0; i < NPU_EVENT_PIPE_MAX; i++) {
-        event_pipe_read[i] = -1;
-        event_pipe_write[i] = -1;
-    }
-    {
-        int fd[2];
-        if (pipe(fd) == 0) {
-            event_pipe_read[AGG_EVENT_ID] = fd[0];
-            event_pipe_write[AGG_EVENT_ID] = fd[1];
-            /* Keep event reads non-blocking so FUSE thread never stalls on empty pipe. */
-            (void)fcntl(fd[0], F_SETFL, fcntl(fd[0], F_GETFL) | O_NONBLOCK);
-        }
-    }
-    event_pipe_initialized = 1;
-}
-
 int fuse_prepare_mount(void);
 int fuse_prepare_mount(void)
 {
@@ -297,8 +332,6 @@ int fuse_prepare_mount(void)
     if (fioc_fuse != NULL) {
         return 0;
     }
-
-    fuse_event_pipes_init();
 
     memset(&opts, 0, sizeof(opts));
     rc = fuse_parse_cmdline(&args, &opts);
@@ -358,6 +391,7 @@ int fuse_loop_main(void)
     }
 
     fuse_unmount(fioc_fuse);
+    fioc_destroy_poll_handle(fioc_take_event_poll_handle());
     fuse_destroy(fioc_fuse);
     fioc_fuse = NULL;
     free(fioc_mountpoint);
