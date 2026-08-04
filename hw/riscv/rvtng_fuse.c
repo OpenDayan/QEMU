@@ -123,7 +123,7 @@ static int fioc_getattr(const char *path, struct stat *stbuf,
     case FIOC_USER:
         stbuf->st_mode = S_IFREG | 0666;
         stbuf->st_nlink = 1;
-        stbuf->st_size = RVTNG_INTC_SIZE;
+        stbuf->st_size = RVTNG_USER_SIZE;
         stbuf->st_rdev = 10;
         stbuf->st_dev = 10;
         break;
@@ -188,10 +188,10 @@ static int fioc_read(const char *path, char *buf, size_t size,
 
     hwaddr addr = (hwaddr)offset;
     if (ft == FIOC_USER) {
-        if (offset < 0 || (uint64_t)offset + (uint64_t)size > RVTNG_INTC_SIZE) {
+        if (offset < 0 || (uint64_t)offset + (uint64_t)size > RVTNG_USER_SIZE) {
             return -EINVAL;
         }
-        addr = RVTNG_INTC_BASE + (hwaddr)offset;
+        addr = RVTNG_USER_BASE + (hwaddr)offset;
     }
 
     /* address_space_read may dispatch to device MMIO (e.g. the rvtng INTC),
@@ -256,10 +256,10 @@ static int fioc_write(const char *path, const char *buf, size_t size,
     int ft = (int)fi->fh;
     hwaddr addr = (hwaddr)offset;
     if (ft == FIOC_USER) {
-        if (offset < 0 || (uint64_t)offset + (uint64_t)size > RVTNG_INTC_SIZE) {
+        if (offset < 0 || (uint64_t)offset + (uint64_t)size > RVTNG_USER_SIZE) {
             return -EINVAL;
         }
-        addr = RVTNG_INTC_BASE + (hwaddr)offset;
+        addr = RVTNG_USER_BASE + (hwaddr)offset;
     }
 
     // printf("QEMU Get fioc_write: 0x%lx, data[0]: 0x%lx\n", offset, *(long*)buf);

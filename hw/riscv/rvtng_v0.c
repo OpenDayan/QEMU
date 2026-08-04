@@ -55,10 +55,12 @@
 #define DAYAN_CLINT_IPI_APERTURE_SIZE DAYAN_CLINT_MTIMECMP_OFF
 #define DAYAN_CLINT_MTIMER_SIZE       0xc000
 #define DAYAN_CLINT_TIMEBASE_FREQ     1000000
+#define RVTNG_V0_URAM_STRIDE          0x200000
 
 static const MemMapEntry rvtng_v0_memmap[] = {
     [RVTNG_V0_MAILBOX]           = {     0x1000,        0x1000 },
     [RVTNG_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
+    [RVTNG_V0_ATOMIC_CACHE_CONTROL] = {  0x4000,        0x1000 },
     [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
     [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
     [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
@@ -67,10 +69,56 @@ static const MemMapEntry rvtng_v0_memmap[] = {
 };
 
 /*
- * The debug controller, error device, atomic-cache configuration, MMU, PCU,
- * and PLIC apertures intentionally remain unassigned until those models are
- * implemented.
+ * The debug controller, error device, MMU, PCU, and PLIC apertures
+ * intentionally remain unassigned until those models are implemented.
  */
+
+static uint64_t rvtng_atomic_cache_control_read(void *opaque, hwaddr offset,
+                                                unsigned size)
+{
+    RVTNGV0SoCState *s = opaque;
+
+    (void)size;
+    switch (offset) {
+    case RVTNG_ATOMIC_CACHE_STATUS_OFF:
+        return s->atomic_cache_status;
+    case RVTNG_ATOMIC_CACHE_BACKING_OFF:
+        return s->atomic_cache_backing_base;
+    default:
+        return 0;
+    }
+}
+
+static void rvtng_atomic_cache_control_write(void *opaque, hwaddr offset,
+                                             uint64_t value, unsigned size)
+{
+    RVTNGV0SoCState *s = opaque;
+
+    if (offset == RVTNG_ATOMIC_CACHE_BACKING_OFF &&
+        size == sizeof(s->atomic_cache_backing_base)) {
+        s->atomic_cache_backing_base = value;
+        s->atomic_cache_status = RVTNG_ATOMIC_CACHE_STATUS_DONE;
+    } else if (offset == RVTNG_ATOMIC_CACHE_STATUS_OFF && (value & 1)) {
+        /* The functional cache is not modeled; complete a flush immediately. */
+        s->atomic_cache_status = RVTNG_ATOMIC_CACHE_STATUS_DONE;
+    }
+}
+
+static const MemoryRegionOps rvtng_atomic_cache_control_ops = {
+    .read = rvtng_atomic_cache_control_read,
+    .write = rvtng_atomic_cache_control_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+};
 
 static void rvtng_intc_emit_rising_irq(uint32_t prev_status,
                                        uint32_t prev_enable,
@@ -433,6 +481,8 @@ static void rvtng_v0_soc_reset_hold(Object *obj, ResetType type)
     rvtng_fuse_reset_events();
     s->intc_status = 0;
     s->intc_enable = 0;
+    s->atomic_cache_status = 0;
+    s->atomic_cache_backing_base = 0;
     for (unsigned i = 0; i < RVTNG_INTC_MAILBOX_COUNT; i++) {
         s->intc_mailbox[i] = 1;
     }
@@ -469,6 +519,10 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 
     g_assert(memmap[RVTNG_V0_INTERRUPT_HANDLER].base == RVTNG_INTC_BASE);
     g_assert(memmap[RVTNG_V0_INTERRUPT_HANDLER].size == RVTNG_INTC_SIZE);
+    g_assert(memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].base ==
+             RVTNG_ATOMIC_CACHE_CONTROL_BASE);
+    g_assert(memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].size ==
+             RVTNG_ATOMIC_CACHE_CONTROL_SIZE);
     g_assert(DAYAN_CLINT_MTIMECMP_OFF + DAYAN_CLINT_MTIMER_SIZE ==
              memmap[RVTNG_V0_CLINT].size);
     s->num_harts = num_harts;
@@ -526,27 +580,20 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
     memory_region_add_subregion(
         system_memory, memmap[RVTNG_V0_INTERRUPT_HANDLER].base, &s->intc);
 
+    /* Atomic-cache control page. Cache data behavior remains abstracted. */
+    memory_region_init_io(&s->atomic_cache_control, OBJECT(dev),
+                          &rvtng_atomic_cache_control_ops, s,
+                          "rvtng.v0.atomic-cache-control",
+                          memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].size);
+    memory_region_add_subregion(
+        system_memory, memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].base,
+        &s->atomic_cache_control);
+
     /* Atomic-cache data window is currently modeled as fixed RAM. */
     if (!memory_region_init_ram(&s->atomic_cache, OBJECT(dev),
                                 "rvtng.v0.atomic-cache",
                                 memmap[RVTNG_V0_ATOMIC_CACHE].size, errp)) {
         return;
-    for(int core_idx = 0; core_idx < num_harts; core_idx ++) {
-        char name[128];
-        /* URAM */
-        snprintf(name, sizeof(name), "/uram_shm_%d", core_idx);
-        void *uram = frontend_get_shm_ptr(name);
-        if(uram == NULL) {
-            uram = malloc(memmap[RVTNG_V0_URAM].size);
-        }
-        snprintf(name, sizeof(name), "rvtng.v0.uram_%d", core_idx);
-        memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev), name,
-                                memmap[RVTNG_V0_URAM].size, uram
-                                );
-        memory_region_add_subregion(system_memory,
-                                    memmap[RVTNG_V0_URAM].base +
-                                    core_idx * 2048 * 1024, &s->uram[core_idx]
-                                );
     }
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_ATOMIC_CACHE].base,
@@ -574,7 +621,7 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
         memory_region_add_subregion(
             system_memory,
             memmap[RVTNG_V0_URAM].base +
-            core_idx * memmap[RVTNG_V0_URAM].size,
+            core_idx * RVTNG_V0_URAM_STRIDE,
             &s->uram[core_idx]);
     }
 

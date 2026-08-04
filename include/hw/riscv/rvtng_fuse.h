@@ -6,6 +6,8 @@
 /* Shared interrupt-handler MMIO map for guest and FUSE xdma0_user view. */
 #define RVTNG_INTC_BASE             0x2000UL
 #define RVTNG_INTC_SIZE             0x200UL
+#define RVTNG_USER_BASE             RVTNG_INTC_BASE
+#define RVTNG_USER_SIZE             0x3000UL
 #define RVTNG_INTC_STATUS_OFF       0x00
 #define RVTNG_INTC_ENABLE_OFF       0x04
 #define RVTNG_INTC_SET_OFF          0x08
@@ -13,6 +15,12 @@
 #define RVTNG_INTC_ENABLE_SET_OFF   0x10
 #define RVTNG_INTC_ENABLE_CLEAR_OFF 0x14
 #define RVTNG_INTC_MAILBOX0_OFF     0x20
+
+#define RVTNG_ATOMIC_CACHE_CONTROL_BASE 0x4000UL
+#define RVTNG_ATOMIC_CACHE_CONTROL_SIZE 0x1000UL
+#define RVTNG_ATOMIC_CACHE_STATUS_OFF   0x0
+#define RVTNG_ATOMIC_CACHE_BACKING_OFF  0x8
+#define RVTNG_ATOMIC_CACHE_STATUS_DONE  (1U << 1)
 #define RVTNG_INTC_MAILBOX_COUNT    32
 
 /*

@@ -19,7 +19,8 @@
 #define RVTNG_CLINT_BASE        0x20000
 #define RVTNG_ATOMIC_CACHE_BASE 0x400000
 #define RVTNG_URAM_BASE         0x800000
-#define RVTNG_URAM_SIZE         0x100000
+#define RVTNG_URAM_SIZE         0x180000
+#define RVTNG_URAM_STRIDE       0x200000
 
 #define DAYAN_CLINT_IPI_BASE       0x100
 #define DAYAN_CLINT_IPI_HART_SIZE  0x10
@@ -156,6 +157,32 @@ static void test_interrupt_handler(QTestState *qts)
                     UINT64_C(0xaa22334455667788));
 }
 
+static void test_atomic_cache_control(QTestState *qts)
+{
+    const uint64_t base = RVTNG_ATOMIC_CACHE_CONTROL_BASE;
+    const uint64_t backing = UINT64_C(0x80c00000);
+
+    g_assert_cmphex(qtest_readq(
+                        qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF),
+                    ==, 0);
+    g_assert_cmphex(qtest_readq(
+                        qts, base + RVTNG_ATOMIC_CACHE_BACKING_OFF),
+                    ==, 0);
+
+    qtest_writeq(qts, base + RVTNG_ATOMIC_CACHE_BACKING_OFF, backing);
+    g_assert_cmphex(qtest_readq(
+                        qts, base + RVTNG_ATOMIC_CACHE_BACKING_OFF),
+                    ==, backing);
+    g_assert_cmphex(qtest_readq(
+                        qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF),
+                    ==, RVTNG_ATOMIC_CACHE_STATUS_DONE);
+
+    qtest_writeq(qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF, 1);
+    g_assert_cmphex(qtest_readq(
+                        qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF),
+                    ==, RVTNG_ATOMIC_CACHE_STATUS_DONE);
+}
+
 static void test_clint(QTestState *qts)
 {
     uint64_t legacy0 = RVTNG_CLINT_BASE;
@@ -220,13 +247,13 @@ static void test_memory_windows(QTestState *qts)
         { RVTNG_ATOMIC_CACHE_BASE, UINT64_C(0x1111111122222222) },
         { RVTNG_URAM_BASE - 8, UINT64_C(0x3333333344444444) },
         { RVTNG_URAM_BASE, UINT64_C(0x5000000000000000) },
-        { RVTNG_URAM_BASE + RVTNG_URAM_SIZE,
+        { RVTNG_URAM_BASE + RVTNG_URAM_STRIDE,
           UINT64_C(0x6000000000000000) },
-        { RVTNG_URAM_BASE + 2 * RVTNG_URAM_SIZE,
+        { RVTNG_URAM_BASE + 2 * RVTNG_URAM_STRIDE,
           UINT64_C(0x7000000000000000) },
-        { RVTNG_URAM_BASE + 3 * RVTNG_URAM_SIZE,
+        { RVTNG_URAM_BASE + 3 * RVTNG_URAM_STRIDE,
           UINT64_C(0x8000000000000000) },
-        { RVTNG_URAM_BASE + 4 * RVTNG_URAM_SIZE - 8,
+        { RVTNG_URAM_BASE + 3 * RVTNG_URAM_STRIDE + RVTNG_URAM_SIZE - 8,
           UINT64_C(0x99999999aaaaaaaa) },
     };
 
@@ -254,12 +281,14 @@ static void test_rvtng_v0_cluster(void)
     mtree = qtest_hmp(qts, "info mtree");
     g_assert_nonnull(strstr(mtree, "rvtng.v0.mailbox"));
     g_assert_nonnull(strstr(mtree, "rvtng.v0.interrupt-handler"));
+    g_assert_nonnull(strstr(mtree, "rvtng.v0.atomic-cache-control"));
     g_assert_nonnull(strstr(mtree, "rvtng.v0.rom"));
     g_assert_nonnull(strstr(mtree, "rvtng.v0.clint.ipi"));
     g_assert_nonnull(strstr(mtree, "rvtng.v0.atomic-cache"));
     g_assert_nonnull(strstr(mtree, "rvtng.v0.uram_3"));
 
     test_interrupt_handler(qts);
+    test_atomic_cache_control(qts);
     test_clint(qts);
     test_memory_windows(qts);
 
@@ -270,6 +299,14 @@ static void test_rvtng_v0_cluster(void)
                                 RVTNG_INTC_ENABLE_OFF), ==, 0);
     g_assert_cmphex(qtest_readq(qts, RVTNG_INTC_BASE +
                                 RVTNG_INTC_MAILBOX0_OFF), ==, 1);
+    g_assert_cmphex(qtest_readq(
+                        qts, RVTNG_ATOMIC_CACHE_CONTROL_BASE +
+                                 RVTNG_ATOMIC_CACHE_STATUS_OFF),
+                    ==, 0);
+    g_assert_cmphex(qtest_readq(
+                        qts, RVTNG_ATOMIC_CACHE_CONTROL_BASE +
+                                 RVTNG_ATOMIC_CACHE_BACKING_OFF),
+                    ==, 0);
     g_assert_cmphex(qtest_readl(qts, RVTNG_CLINT_BASE), ==, 0);
     g_assert_cmphex(qtest_readl(qts, dayan_clint_ipi_reg(
                                 0, DAYAN_CLINT_IPI_ENABLE)), ==, 1);
