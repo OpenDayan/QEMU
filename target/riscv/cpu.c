@@ -3317,6 +3317,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
         .cfg.ext_zicbom = true,
         .cfg.ext_zifencei = true,
         .cfg.ext_zicsr = true,
+        .cfg.ext_zacas = true,
     ),
 
 #if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
