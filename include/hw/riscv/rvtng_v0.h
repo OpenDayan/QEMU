@@ -23,6 +23,7 @@ typedef struct RVTNGV0SoCState {
 
     /*< public >*/
     RISCVHartArrayState cpus;
+    qemu_irq external_irqs[RVTNG_MAX_CALC_CORES];
     MemoryRegion rom;
     MemoryRegion mailbox;
     MemoryRegion intc;

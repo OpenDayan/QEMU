@@ -1,6 +1,6 @@
 #include "qemu/osdep.h"
 
-#include "hw/riscv/ipc_channel.h"
+#include "hw/riscv/rvtng-intf.h"
 
 static void close_pair(int sockets[2])
 {
@@ -118,6 +118,34 @@ static void test_tune_leaves_steady_state_timeouts_disabled(void)
     close_pair(sockets);
 }
 
+static void assert_interrupt_message(int socket_fd, uint64_t core_idx,
+                                     uint64_t level)
+{
+    uint64_t actual = 0;
+
+    g_assert_cmpint(rvt_socket_pop(socket_fd, &actual), ==, 0);
+    g_assert_cmpuint(actual, ==, 0x1);
+    g_assert_cmpint(rvt_socket_pop(socket_fd, &actual), ==, 0);
+    g_assert_cmpuint(actual, ==, core_idx);
+    g_assert_cmpint(rvt_socket_pop(socket_fd, &actual), ==, 0);
+    g_assert_cmpuint(actual, ==, level);
+}
+
+static void test_interrupt_level_message(void)
+{
+    int sockets[2];
+
+    make_pair(sockets);
+
+    g_assert_cmpint(backend_interrupt_update(sockets[0], 3, 1), ==, 1);
+    assert_interrupt_message(sockets[1], 3, 1);
+
+    g_assert_cmpint(backend_interrupt_update(sockets[0], 3, 0), ==, 1);
+    assert_interrupt_message(sockets[1], 3, 0);
+
+    close_pair(sockets);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
@@ -131,6 +159,8 @@ int main(int argc, char **argv)
                     test_pop_rejects_oversized_record);
     g_test_add_func("/rvtng/ipc/no-steady-state-timeouts",
                     test_tune_leaves_steady_state_timeouts_disabled);
+    g_test_add_func("/rvtng/ipc/interrupt-level-message",
+                    test_interrupt_level_message);
 
     return g_test_run();
 }

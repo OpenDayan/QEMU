@@ -30,6 +30,7 @@
 #include "qemu/osdep.h"
 #include "qemu/error-report.h"
 #include "qemu/log.h"
+#include "qemu/main-loop.h"
 #include "qapi/error.h"
 #include "system/address-spaces.h"
 #include "hw/boards.h"
@@ -537,6 +538,10 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpus), errp)) {
         return;
     }
+    for (int core_idx = 0; core_idx < num_harts; core_idx++) {
+        s->external_irqs[core_idx] =
+            qdev_get_gpio_in(DEVICE(&s->cpus.harts[core_idx]), IRQ_M_EXT);
+    }
 
     /* Dayan CLINT IPI registers and software-interrupt outputs. */
     if (!rvtng_clint_connect_harts(s, errp)) {
@@ -632,6 +637,27 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 static void rvtng_v0_soc_unrealize(DeviceState *dev)
 {
     qemu_unregister_resettable(OBJECT(dev));
+}
+
+int frontend_interrupt_update_service(int core_idx, int level)
+{
+    MachineState *machine;
+    RVTNGV0State *s;
+
+    if (core_idx < 0 || core_idx >= RVTNG_MAX_CALC_CORES) {
+        return 0;
+    }
+
+    bql_lock();
+    machine = MACHINE(qdev_get_machine());
+    s = RVTNG_V0_MACHINE(machine);
+    if (core_idx >= s->soc.cpus.num_harts) {
+        bql_unlock();
+        return 0;
+    }
+    qemu_set_irq(s->soc.external_irqs[core_idx], level != 0);
+    bql_unlock();
+    return 1;
 }
 
 static void rvtng_v0_soc_class_init(ObjectClass *klass, const void *data)

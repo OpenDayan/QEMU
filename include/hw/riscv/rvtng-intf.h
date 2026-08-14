@@ -70,6 +70,7 @@ int frontend_dram_read_service(char *buf, size_t size, off_t addr);
 int frontend_dram_write_service(char *buf, size_t size, off_t addr);
 int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg);
 int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg);
+int frontend_interrupt_update_service(int coreIdx, int level);
 
 static inline void rvt_socket_fatal(const char *operation, const char *stage)
 {
@@ -271,6 +272,13 @@ static inline void* frontend_serve_msg_loop(void* arg) {
             rvt_socket_pop_or_fatal(fdMsg, &commit_info.timestamp,
                                     "frontend commit timestamp");
             frontend_instruction_commit_service(coreIdx, &commit_info);
+        } else if(msg == 0x1) { // Interrupt Level Update
+            uint64_t coreIdx, level;
+            rvt_socket_pop_or_fatal(fdMsg, &coreIdx,
+                                    "frontend interrupt core index");
+            rvt_socket_pop_or_fatal(fdMsg, &level,
+                                    "frontend interrupt level");
+            frontend_interrupt_update_service(coreIdx, level != 0);
         } else if(msg == 0x10) { // Memory Read
             // Get Addr and Size
             uint64_t addr, size, buf;
@@ -378,6 +386,16 @@ static inline int backend_instruction_commit(int fdMsg, int coreIdx, rvt_commit_
                              "backend instruction commit data");
     rvt_socket_push_or_fatal(fdMsg, pkg->timestamp,
                              "backend instruction commit timestamp");
+    return 1;
+}
+
+static inline int backend_interrupt_update(int fdMsg, int coreIdx, int level) {
+    rvt_socket_push_or_fatal(fdMsg, 0x1,
+                             "backend interrupt opcode");
+    rvt_socket_push_or_fatal(fdMsg, coreIdx,
+                             "backend interrupt core index");
+    rvt_socket_push_or_fatal(fdMsg, level != 0,
+                             "backend interrupt level");
     return 1;
 }
 
