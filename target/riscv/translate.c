@@ -1156,6 +1156,7 @@ static bool gen_amo(DisasContext *ctx, arg_atomic *a,
 
     decode_save_opc(ctx, RISCV_UW2_ALWAYS_STORE_AMO);
     src1 = get_address(ctx, a->rs1, 0);
+    gen_helper_rvtng_amo_guard(tcg_env, src1);
     func(dest, src1, src2, ctx->mem_idx, mop);
 
     gen_set_gpr(ctx, a->rd, dest);
@@ -1170,6 +1171,7 @@ static bool gen_cmpxchg(DisasContext *ctx, arg_atomic *a, MemOp mop)
 
     mop |= mo_endian(ctx);
     decode_save_opc(ctx, RISCV_UW2_ALWAYS_STORE_AMO);
+    gen_helper_rvtng_amo_guard(tcg_env, src1);
     tcg_gen_atomic_cmpxchg_tl(dest, src1, dest, src2, ctx->mem_idx, mop);
 
     gen_set_gpr(ctx, a->rd, dest);

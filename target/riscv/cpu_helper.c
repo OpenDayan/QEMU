@@ -37,6 +37,7 @@
 #include "debug.h"
 #include "pmp.h"
 #include "qemu/plugin.h"
+#include "hw/riscv/rvtng_mmu.h"
 
 int riscv_env_mmu_index(CPURISCVState *env, bool ifetch)
 {
@@ -1758,6 +1759,56 @@ static void pmu_tlb_fill_incr_ctr(RISCVCPU *cpu, MMUAccessType access_type)
     riscv_pmu_incr_ctr(cpu, pmu_event_type);
 }
 
+/*
+ * ClusterMMU (rvtng-v0 SoC): run the bus address emitted by this hart
+ * through the ClusterMMU model.  This is the software equivalent of the
+ * scalar AXI5 AR/AW address passing the hardware ClusterMMU slave port
+ * (spec: one address translation per access, fault replaces the master
+ * address with the redirect PA, access type decides R/W/X permission
+ * and redirect selection).
+ *
+ * Runs after get_physical_address()/PMP: RISC-V paging and PMP are CPU
+ * properties, the ClusterMMU sits downstream on the bus.  MMARE CPUs of
+ * other machines leave cluster_mmu == NULL and keep the old fast path.
+ */
+static hwaddr riscv_cpu_cluster_mmu_xlate(CPURISCVState *env, hwaddr gpa,
+                                          MMUAccessType access_type,
+                                          RvtngMmuFault *fault)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+    static const RvtngMmuAccess map[3] = {
+        [MMU_INST_FETCH] = RVTNG_MMU_EXECUTE,
+        [MMU_DATA_LOAD] = RVTNG_MMU_READ,
+        [MMU_DATA_STORE] = RVTNG_MMU_WRITE,
+    };
+
+    *fault = RVTNG_MMU_FAULT_NONE;
+    if (!cpu->cluster_mmu) {
+        return gpa;
+    }
+    /* The MMU's own APB window stays outside translation so that the
+     * configuration page is reachable from any page-table state. */
+    if (gpa >= cpu->cluster_mmu_cfg_base &&
+        gpa < cpu->cluster_mmu_cfg_base + RVTNG_MMU_APB_SIZE) {
+        return gpa;
+    }
+    return rvtng_cluster_mmu_xlate(cpu->cluster_mmu, gpa,
+                                   map[access_type], cpu->cluster_mmu_port,
+                                   fault);
+}
+
+/*
+ * Atomic instructions (AMO/SC) cannot run against a redirected page:
+ * QEMU executes them on host pointers and refuses TLB_MMIO entries
+ * (stop-the-world, then a guaranteed abort on the serial retry), so a
+ * redirect can never be applied to the atomic's store side.  Rather
+ * than letting the emulator abort, the translator guards every atomic
+ * with helper_rvtng_amo_guard() (op_helper.c), which raises the
+ * architectural store/AMO access fault when the ClusterMMU would
+ * redirect it; the guest observes the fault with stval set and memory
+ * stays untouched.  Atomics whose translation passes run on a normal
+ * (RAM) mapping and are unaffected.
+ */
 bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                         MMUAccessType access_type, int mmu_idx,
                         bool probe, uintptr_t retaddr)
@@ -1873,6 +1924,60 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     }
 
     if (ret == TRANSLATE_SUCCESS) {
+        if (cpu->cluster_mmu) {
+            RvtngMmuFault mmu_fault;
+            MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
+            hwaddr mmu_va = pa;
+
+            pa = riscv_cpu_cluster_mmu_xlate(env, pa, access_type,
+                                             &mmu_fault);
+            /*
+             * ClusterMMU mapping granularity is per 4 KiB page (FixMap
+             * window or Sv39 leaf), so never let PMP widen the cached
+             * TLB entry past the page the model actually translated.
+             */
+            tlb_size = TARGET_PAGE_SIZE;
+            if (mmu_fault != RVTNG_MMU_FAULT_NONE) {
+                /*
+                 * A redirect substitutes the whole master address, which
+                 * a page-granular TLB entry cannot express: entry-based
+                 * mapping would re-add the faulting access's page offset
+                 * instead of landing exactly on the redirect base.  The
+                 * marker-attributed entry points at the shim window,
+                 * whose handler re-runs the translation per access; the
+                 * entry grants only the faulting access type so other
+                 * accesses still refill against the real page.
+                 */
+                pa = rvtng_mmu_redirect_tlb_pa(cpu->cluster_mmu, mmu_fault,
+                                               mmu_va);
+                attrs = rvtng_mmu_redirect_tlb_attrs(cpu->cluster_mmu_port,
+                                                     (RvtngMmuAccess)access_type,
+                                                     mmu_va);
+                prot &= access_type == MMU_INST_FETCH ? PAGE_EXEC :
+                        access_type == MMU_DATA_STORE ? PAGE_WRITE :
+                                                        PAGE_READ;
+            } else {
+                /*
+                 * The ClusterMMU permission-checked only this access type;
+                 * keeping the wider RISC-V/PMP modes in prot would let
+                 * later accesses of those types hit this entry and skip
+                 * their own ClusterMMU permission check and fault
+                 * redirect.  Stores additionally keep READ: a cached leaf
+                 * is never writable without being readable (W&&!R is an
+                 * illegal PTE), so read cannot bypass a check the store
+                 * passed, and QEMU's atomic RMW path requires the store
+                 * entry to carry read or it refills for the load side and
+                 * trips its g_assert.
+                 */
+                prot &= access_type == MMU_INST_FETCH ? PAGE_EXEC :
+                        access_type == MMU_DATA_STORE ?
+                                        (PAGE_READ | PAGE_WRITE) : PAGE_READ;
+            }
+            tlb_set_page_with_attrs(cs, address & ~(tlb_size - 1),
+                                    pa & ~(tlb_size - 1), attrs, prot,
+                                    mmu_idx, tlb_size);
+            return true;
+        }
         tlb_set_page(cs, address & ~(tlb_size - 1), pa & ~(tlb_size - 1),
                      prot, mmu_idx, tlb_size);
         return true;

@@ -57,6 +57,14 @@ typedef struct {
 #define RVT_MSG_SOCKET_PATH "/tmp/card0_rvt_msg"
 #define RVT_INST_REQ_SOCKET_PATH "/tmp/card0_rvt_inst_req"
 #define RVT_INST_RSP_SOCKET_PATH "/tmp/card0_rvt_inst_rsp"
+/*
+ * Push-only MMU config-sync channel (QEMU -> CModel): carries accepted
+ * ClusterMMU register writes (opcode 0x20) and flush triggers (0x21).
+ * It exists so configuration mirroring never interleaves with the
+ * position-framed msg socket, where CModel reads 0x10/0x11 replies
+ * inline and a spurious opcode word would desynchronize the stream.
+ */
+#define RVT_MMU_SOCKET_PATH "/tmp/card0_rvt_mmu"
 
 DEFINE_BLOCKING_QUEUE(rvt_pack_t, RVTPackQ)
 DEFINE_BLOCKING_QUEUE(rvt_commit_t, RVTCommitQ)

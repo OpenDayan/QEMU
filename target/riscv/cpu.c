@@ -672,9 +672,13 @@ bool riscv_cpu_has_work(CPUState *cs)
     CPURISCVState *env = &cpu->env;
     /*
      * Definition of the WFI instruction requires it to ignore the privilege
-     * mode and delegation registers, but respect individual enables
+     * mode and delegation registers, but respect individual enables.
+     * An RNMI is non-maskable by definition, so a halted hart must also
+     * resume on CPU_INTERRUPT_RNMI even though rnmip never appears in
+     * mip/mie.
      */
-    return riscv_cpu_all_pending(env) != 0 ||
+    return (cs->interrupt_request & CPU_INTERRUPT_RNMI) ||
+        riscv_cpu_all_pending(env) != 0 ||
         riscv_cpu_sirq_pending(env) != RISCV_EXCP_NONE ||
         riscv_cpu_vsirq_pending(env) != RISCV_EXCP_NONE;
 }

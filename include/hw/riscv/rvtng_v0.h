@@ -16,6 +16,7 @@
 #include "hw/riscv/riscv_hart.h"
 #include "hw/riscv/rvtng-intf.h"
 #include "hw/riscv/rvtng_fuse.h"
+#include "hw/riscv/rvtng_mmu.h"
 
 typedef struct RVTNGV0SoCState {
     /*< private >*/
@@ -40,6 +41,7 @@ typedef struct RVTNGV0SoCState {
     uint32_t num_harts;
     MemoryRegion atomic_cache;
     MemoryRegion uram[RVTNG_MAX_CALC_CORES];
+    RvtngMmuState mmu;
 } RVTNGV0SoCState;
 
 #define TYPE_RVTNG_V0_SOC "rvtng.v0.soc"
@@ -63,6 +65,7 @@ enum {
     RVTNG_V0_MAILBOX,
     RVTNG_V0_INTERRUPT_HANDLER,
     RVTNG_V0_ATOMIC_CACHE_CONTROL,
+    RVTNG_V0_MMU,
     RVTNG_V0_ROM,
     RVTNG_V0_CLINT,
     RVTNG_V0_ATOMIC_CACHE,

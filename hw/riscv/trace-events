@@ -24,3 +24,10 @@ riscv_iommu_hpm_incr_ctr(uint64_t cntr_val) "cntr_val 0x%"PRIx64
 riscv_iommu_hpm_iocntinh_cy(bool prev_cy_inh) "prev_cy_inh %d"
 riscv_iommu_hpm_cycle_write(uint32_t ovf, uint64_t val) "ovf 0x%x val 0x%"PRIx64
 riscv_iommu_hpm_evt_write(uint32_t ctr_idx, uint32_t ovf, uint64_t val) "ctr_idx 0x%x ovf 0x%x val 0x%"PRIx64
+
+# rvtng_mmu.c
+rvtng_mmu_xlate(uint64_t va, uint64_t pa, unsigned port, const char *acc, unsigned fault) "va 0x%016" PRIx64 " pa 0x%016" PRIx64 " port %u %s fault %u"
+rvtng_mmu_reg_write(uint32_t off, uint32_t val) "off 0x%03x val 0x%08x"
+rvtng_mmu_flush(uint32_t asid_sel, uint32_t asid) "asid_sel %u asid %u"
+rvtng_mmu_redirect(uint64_t va, uint64_t pa, unsigned fault) "va 0x%016" PRIx64 " redirect pa 0x%016" PRIx64 " fault %u"
+rvtng_mmu_fwd(uint32_t op, uint64_t a, uint64_t b) "op 0x%02x 0x%" PRIx64 " 0x%" PRIx64

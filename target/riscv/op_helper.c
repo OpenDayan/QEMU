@@ -20,6 +20,7 @@
 
 #include "qemu/osdep.h"
 #include "hw/riscv/rvtng-intf.h"
+#include "hw/riscv/rvtng_mmu.h"
 #include "cpu.h"
 #include "internals.h"
 #include "exec/cputlb.h"
@@ -56,6 +57,40 @@ G_NORETURN void riscv_raise_exception(CPURISCVState *env,
 
     cs->exception_index = exception;
     cpu_loop_exit_restore(cs, pc);
+}
+
+/*
+ * Atomic instructions (AMO/SC) cannot run against a redirected page:
+ * QEMU executes them on host pointers and refuses TLB_MMIO entries
+ * (stop-the-world, then a guaranteed abort on the serial retry), so a
+ * redirect can never be applied to the atomic's store side.  The
+ * translator guards every atomic with this helper, which raises the
+ * architectural store/AMO access fault when the ClusterMMU would
+ * redirect the access; the guest observes the fault with stval set and
+ * memory stays untouched.  Atomics whose translation passes run on a
+ * normal RAM mapping and are unaffected.
+ */
+void helper_rvtng_amo_guard(CPURISCVState *env, target_ulong addr)
+{
+    RISCVCPU *cpu = env_archcpu(env);
+    RvtngMmuFault fault = RVTNG_MMU_FAULT_NONE;
+
+    if (!cpu->cluster_mmu) {
+        return;
+    }
+    /* The MMU's own APB window stays outside translation, mirroring the
+     * data-path hook in cpu_helper.c. */
+    if (addr >= cpu->cluster_mmu_cfg_base &&
+        addr < cpu->cluster_mmu_cfg_base + RVTNG_MMU_APB_SIZE) {
+        return;
+    }
+    rvtng_cluster_mmu_xlate(cpu->cluster_mmu, addr, RVTNG_MMU_WRITE,
+                            cpu->cluster_mmu_port, &fault);
+    if (fault != RVTNG_MMU_FAULT_NONE) {
+        env->badaddr = addr;
+        riscv_raise_exception(env, RISCV_EXCP_STORE_AMO_ACCESS_FAULT,
+                              GETPC());
+    }
 }
 
 void helper_raise_exception(CPURISCVState *env, uint32_t exception)

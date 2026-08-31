@@ -77,6 +77,7 @@ static bool gen_sc(DisasContext *ctx, arg_atomic *a, MemOp mop)
      */
     dest = dest_gpr(ctx, a->rd);
     src2 = get_gpr(ctx, a->rs2, EXT_NONE);
+    gen_helper_rvtng_amo_guard(tcg_env, src1);
     tcg_gen_atomic_cmpxchg_tl(dest, load_res, load_val, src2,
                               ctx->mem_idx, mop);
     tcg_gen_setcond_tl(TCG_COND_NE, dest, dest, load_val);

@@ -62,6 +62,7 @@ static const MemMapEntry rvtng_v0_memmap[] = {
     [RVTNG_V0_MAILBOX]           = {     0x1000,        0x1000 },
     [RVTNG_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
     [RVTNG_V0_ATOMIC_CACHE_CONTROL] = {  0x4000,        0x1000 },
+    [RVTNG_V0_MMU]               = {     0x8000,        0x1000 },
     [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
     [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
     [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
@@ -70,8 +71,9 @@ static const MemMapEntry rvtng_v0_memmap[] = {
 };
 
 /*
- * The debug controller, error device, MMU, PCU, and PLIC apertures
+ * The debug controller, error device, PCU, and PLIC apertures
  * intentionally remain unassigned until those models are implemented.
+ * The ClusterMMU aperture is modeled by TYPE_RVTNG_MMU at 0x8000.
  */
 
 static uint64_t rvtng_atomic_cache_control_read(void *opaque, hwaddr offset,
@@ -524,6 +526,7 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
              RVTNG_ATOMIC_CACHE_CONTROL_BASE);
     g_assert(memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].size ==
              RVTNG_ATOMIC_CACHE_CONTROL_SIZE);
+    g_assert(memmap[RVTNG_V0_MMU].size == RVTNG_MMU_APB_SIZE);
     g_assert(DAYAN_CLINT_MTIMECMP_OFF + DAYAN_CLINT_MTIMER_SIZE ==
              memmap[RVTNG_V0_CLINT].size);
     s->num_harts = num_harts;
@@ -676,6 +679,7 @@ static void rvtng_v0_soc_instance_init(Object *obj)
     RVTNGV0SoCState *s = RVTNG_V0_SOC(obj);
 
     object_initialize_child(obj, "cpus", &s->cpus, TYPE_RISCV_HART_ARRAY);
+    object_initialize_child(obj, "mmu", &s->mmu, TYPE_RVTNG_MMU);
 }
 
 static const TypeInfo rvtng_v0_soc_info = {
@@ -714,6 +718,36 @@ static void rvtng_v0_machine_init(MachineState *machine)
                                16UL * 1024 * 1024 * 1024, dram);
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_DRAM].base, &s->dram);
+
+    /*
+     * ClusterMMU (scalar ports 0..3).  Realized here rather than in the
+     * SoC because the PTW reader binds the shared DRAM image, which only
+     * exists once the region above is created.  dram-size tracks the
+     * actual shm size; the region declaration is larger on purpose.
+     */
+    object_property_set_link(OBJECT(&s->soc.mmu), "dram-mr",
+                             OBJECT(&s->dram), &error_fatal);
+    qdev_prop_set_uint64(DEVICE(&s->soc.mmu), "dram-base",
+                         memmap[RVTNG_V0_DRAM].base);
+    qdev_prop_set_uint64(DEVICE(&s->soc.mmu), "dram-size",
+                         RVTNG_MMU_DEFAULT_DRAM_SIZE);
+    if (!sysbus_realize(SYS_BUS_DEVICE(&s->soc.mmu), &error_fatal)) {
+        return;
+    }
+    sysbus_mmio_map(SYS_BUS_DEVICE(&s->soc.mmu), 0,
+                    memmap[RVTNG_V0_MMU].base);
+    for (unsigned i = 0; i < machine->smp.cpus; i++) {
+        CPUState *cs = cpu_by_arch_id(i);
+        RISCVCPU *cpu = cs ? RISCV_CPU(cs) : NULL;
+
+        if (!cpu) {
+            error_report("rvtng-v0: ClusterMMU cannot find hart %u", i);
+            return;
+        }
+        cpu->cluster_mmu = DEVICE(&s->soc.mmu);
+        cpu->cluster_mmu_cfg_base = memmap[RVTNG_V0_MMU].base;
+        cpu->cluster_mmu_port = i & 3;
+    }
 
     if (machine->firmware) {
         hwaddr firmware_entry = memmap[RVTNG_V0_ROM].base;

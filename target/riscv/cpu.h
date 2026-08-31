@@ -547,6 +547,16 @@ struct ArchCPU {
     RISCVCPUConfig cfg;
     RISCVSATPModes satp_modes;
 
+    /*
+     * ClusterMMU (rvtng-v0 SoC) wiring for the scalar AXI ports.  The
+     * CPU stays in MBARE; bus addresses emitted by this hart are run
+     * through the SoC ClusterMMU model before they reach memory.
+     * cluster_mmu == NULL keeps the plain pass-through fast path.
+     */
+    DeviceState *cluster_mmu;
+    hwaddr cluster_mmu_cfg_base;
+    uint8_t cluster_mmu_port;
+
     QEMUTimer *pmu_timer;
     /* A bitmask of Available programmable counters */
     uint32_t pmu_avail_ctrs;

@@ -52,6 +52,7 @@ tests = {
 
 if host_os != 'windows'
   tests += {'test-rvtng-ipc-channel': []}
+  tests += {'test-rvtng-mmu': ['../../hw/riscv/rvtng_mmu_core.c']}
 endif
 
 if have_system or have_tools
