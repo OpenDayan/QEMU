@@ -13,6 +13,9 @@
  *
  * Behavioral baseline:
  *   - 56-bit physical address space, Sv39 39-bit virtual addresses.
+ *   - Only bus addresses at/above RVTNG_MMU_DRAM_BASE (2 GiB) cross the
+ *     translation engine; lower addresses (URAM aperture, control space,
+ *     the APB page) pass through identity on every port.
  *   - Lookup order: FixMap -> per-port L1 -> shared L2 -> blocking PTW.
  *   - Faults do not abort an access; they redirect it to a fault-specific
  *     base address, exactly like the hardware master AR/AW substitution.

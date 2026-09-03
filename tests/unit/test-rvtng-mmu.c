@@ -156,22 +156,31 @@ static void test_fixmap(void)
     rvtng_mmu_core_set_reader(&c, fake_read, &t);
 
     /* Reset image: full-range identity FixMap. */
+    pa = rvtng_mmu_core_translate(&c, 0x80001234, RVTNG_MMU_READ, 0,
+                                  &fault, NULL);
+    g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_NONE);
+    g_assert_cmpuint(pa, ==, 0x80001234);
+
+    /* Below the 2 GiB DRAM base the engine is bypassed outright, so the
+     * same offset passes through even though the reset FixMap would
+     * identity-map it too. */
     pa = rvtng_mmu_core_translate(&c, 0x1234, RVTNG_MMU_READ, 0,
                                   &fault, NULL);
     g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_NONE);
     g_assert_cmpuint(pa, ==, 0x1234);
 
-    /* Windowed FixMap: base 0x100000, size 2 pages. */
+    /* Windowed FixMap: base 0x100000, covering VA pages 0x80000..0x80001
+     * (2 pages). */
     g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_FIX_MAP_BASE_LO,
                                            0x00100000));
     g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_FIX_MAP_SIZE_LO,
-                                           2));
-    pa = rvtng_mmu_core_translate(&c, 0x1000, RVTNG_MMU_WRITE, 0,
+                                           0x80002));
+    pa = rvtng_mmu_core_translate(&c, 0x80001000, RVTNG_MMU_WRITE, 0,
                                   &fault, NULL);
-    g_assert_cmpuint(pa, ==, 0x101000);
+    g_assert_cmpuint(pa, ==, 0x80101000);
     /* First page outside the window: FixMap misses and the lookup falls
      * through to the (empty) page table -> pte_invalid. */
-    pa = rvtng_mmu_core_translate(&c, 0x2000, RVTNG_MMU_READ, 0,
+    pa = rvtng_mmu_core_translate(&c, 0x80002000, RVTNG_MMU_READ, 0,
                                   &fault, NULL);
     g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_PTE_INVALID);
 
@@ -199,7 +208,7 @@ static void test_fixmap(void)
 
 static void test_page_sizes(void)
 {
-    const uint64_t va = 0x0000000012345678ull;
+    const uint64_t va = 0x0000000092345678ull;
     RvtngMmuCore c;
     FakePageTable t;
     RvtngMmuFault fault;
@@ -255,7 +264,7 @@ static void test_page_sizes(void)
 
 static void test_faults_and_permissions(void)
 {
-    const uint64_t va = 0x0000000000456789ull;
+    const uint64_t va = 0x0000000080456789ull;
     RvtngMmuCore c;
     FakePageTable t;
     RvtngMmuFault fault;
@@ -313,7 +322,7 @@ static void test_faults_and_permissions(void)
 
 static void test_negative_cache_and_flush(void)
 {
-    const uint64_t va = 0x0000000000123456ull;
+    const uint64_t va = 0x0000000080123456ull;
     RvtngMmuCore c;
     FakePageTable t;
     RvtngMmuFault fault;
@@ -401,9 +410,9 @@ static void test_apb_and_snapshot(void)
                                            0x00001000));
     g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_FIX_MAP_BASE_HI,
                                            0));
-    pa = rvtng_mmu_core_translate(&c, 0x2000, RVTNG_MMU_READ, 0, &fault, NULL);
+    pa = rvtng_mmu_core_translate(&c, 0x80002000, RVTNG_MMU_READ, 0, &fault, NULL);
     g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_NONE);
-    g_assert_cmpuint(pa, ==, 0x3000);
+    g_assert_cmpuint(pa, ==, 0x80003000);
 
     /* Flush handshake through the register image. */
     g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_TLB_FLUSH, 1));
@@ -438,28 +447,32 @@ static void test_dram_reader_bounds(void)
 
     rvtng_mmu_core_init(&c);
     memcpy(bytes, &value, sizeof(value));
-    rvtng_mmu_core_bind_dram(&c, bytes, 0x1000, sizeof(bytes));
+    /* VA 0x80000000 roots its walk at root index 2, i.e. PTW page base
+     * + 0x10; place the image on that slot. */
+    rvtng_mmu_core_bind_dram(&c, bytes, 0x1010, sizeof(bytes));
 
     g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_N_FIX_MAP_EN, 1));
 
     /* The DRAM image acts as the page table; the root PTE read at
-     * 0x1000 must observe the stored value (V=0 -> pte_invalid proves
+     * 0x1010 must observe the stored value (V=0 -> pte_invalid proves
      * the data path). */
     g_assert_true(rvtng_mmu_core_write_reg(
-        &c, RVTNG_MMU_REG_PTW_BASE_LO, 0x00001000));
-    pa = rvtng_mmu_core_translate(&c, 0x0, RVTNG_MMU_READ, 0, &fault, NULL);
+        &c, RVTNG_MMU_REG_PTW_BASE_LO, 0x00001010));
+    pa = rvtng_mmu_core_translate(&c, 0x80000000, RVTNG_MMU_READ, 0, &fault, NULL);
     g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_PTE_INVALID);
     /* Redirect bases are zero here: the fault PA is the bare offset. */
     g_assert_cmpuint(pa, ==, 0);
 
-    /* Drop the negative entry cached for VA 0 before the second probe. */
+    /* Drop the negative entry cached for VA 0x80000000 before the
+     * second probe. */
     rvtng_mmu_core_flush(&c, false, 0);
     rvtng_mmu_core_ack_flush(&c);
 
-    /* Out-of-image PTW reads are bus errors. */
+    /* Out-of-image PTW reads are bus errors: base 0xff0 truncates to
+     * page 0, so the root slot read lands at 0x10. */
     g_assert_true(rvtng_mmu_core_write_reg(
         &c, RVTNG_MMU_REG_PTW_BASE_LO, 0x00000ff0));
-    pa = rvtng_mmu_core_translate(&c, 0x0, RVTNG_MMU_READ, 0, &fault, NULL);
+    pa = rvtng_mmu_core_translate(&c, 0x80000000, RVTNG_MMU_READ, 0, &fault, NULL);
     g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_PTW_BUS_ERROR);
     g_assert_cmpuint(pa, ==, 0);
 }
@@ -470,7 +483,7 @@ static void test_dram_reader_bounds(void)
 
 static void test_asid_flush(void)
 {
-    const uint64_t va = 0x0000000000567000ull;
+    const uint64_t va = 0x0000000080567000ull;
     RvtngMmuCore c;
     FakePageTable t;
     RvtngMmuFault fault;
@@ -507,8 +520,8 @@ static void test_asid_flush(void)
 
 static void test_global_pdc_rtl_behavior(void)
 {
-    const uint64_t va0 = 0x0000000000011000ull;
-    const uint64_t va1 = 0x0000000000012000ull;
+    const uint64_t va0 = 0x0000000080011000ull;
+    const uint64_t va1 = 0x0000000080012000ull;
     RvtngMmuCore c;
     FakePageTable t;
     RvtngMmuFault fault;
@@ -601,11 +614,53 @@ static void test_overlap_and_ports(void)
     g_assert_cmpuint(t.reads, ==, 0);
 }
 
+/* ------------------------------------------------------------------ */
+/* 2 GiB bus boundary                                                  */
+/* ------------------------------------------------------------------ */
+
+static void test_below_dram_identity(void)
+{
+    const uint64_t va = 0x1234;
+    RvtngMmuCore c;
+    FakePageTable t;
+    RvtngMmuFault fault;
+    RvtngMmuPageSize size;
+    uint64_t pa;
+
+    /* Both relocation mechanisms are armed against va: a page-table
+     * leaf and a relocating full-range FixMap.  Either one alone would
+     * move the access if it reached the engine; the 2 GiB bus boundary
+     * routes it around both. */
+    memset(&t, 0, sizeof(t));
+    install_4k(&t, va, kLeaf, PTE_V | PTE_R, PTE_V, PTE_V);
+    install_4k(&t, 0x80001234, kLeaf, PTE_V | PTE_R, PTE_V, PTE_V);
+    setup_svm(&c, &t);
+    g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_FIX_MAP_BASE_LO,
+                                           0x90000000));
+
+    pa = rvtng_mmu_core_translate(&c, va, RVTNG_MMU_READ, 0, &fault, &size);
+    g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_NONE);
+    g_assert_cmpuint(size, ==, RVTNG_MMU_PAGE_4K);
+    g_assert_cmpuint(pa, ==, va);
+    g_assert_cmpuint(t.reads, ==, 0);
+
+    /* Control: the same page offset above the base is translated, so
+     * the identity result above is the boundary rule at work, not a
+     * dead page table or FixMap. */
+    g_assert_true(rvtng_mmu_core_write_reg(&c, RVTNG_MMU_REG_N_FIX_MAP_EN, 1));
+    pa = rvtng_mmu_core_translate(&c, 0x80001234, RVTNG_MMU_READ, 0,
+                                  &fault, NULL);
+    g_assert_cmpuint(fault, ==, RVTNG_MMU_FAULT_NONE);
+    g_assert_cmpuint(pa, ==, kLeaf + 0x234);
+    g_assert_cmpuint(t.reads, ==, 3);
+}
+
 int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
     g_test_add_func("/rvtng-mmu/fixmap", test_fixmap);
+    g_test_add_func("/rvtng-mmu/below-dram-identity", test_below_dram_identity);
     g_test_add_func("/rvtng-mmu/page-sizes", test_page_sizes);
     g_test_add_func("/rvtng-mmu/faults-permissions",
                     test_faults_and_permissions);

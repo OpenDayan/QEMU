@@ -68,20 +68,15 @@ G_NORETURN void riscv_raise_exception(CPURISCVState *env,
  * architectural store/AMO access fault when the ClusterMMU would
  * redirect the access; the guest observes the fault with stval set and
  * memory stays untouched.  Atomics whose translation passes run on a
- * normal RAM mapping and are unaffected.
+ * normal RAM mapping and are unaffected.  Only addresses at/above the
+ * 2 GiB DRAM base can be redirected at all.
  */
 void helper_rvtng_amo_guard(CPURISCVState *env, target_ulong addr)
 {
     RISCVCPU *cpu = env_archcpu(env);
     RvtngMmuFault fault = RVTNG_MMU_FAULT_NONE;
 
-    if (!cpu->cluster_mmu) {
-        return;
-    }
-    /* The MMU's own APB window stays outside translation, mirroring the
-     * data-path hook in cpu_helper.c. */
-    if (addr >= cpu->cluster_mmu_cfg_base &&
-        addr < cpu->cluster_mmu_cfg_base + RVTNG_MMU_APB_SIZE) {
+    if (!cpu->cluster_mmu || addr < RVTNG_MMU_DRAM_BASE) {
         return;
     }
     rvtng_cluster_mmu_xlate(cpu->cluster_mmu, addr, RVTNG_MMU_WRITE,

@@ -745,7 +745,6 @@ static void rvtng_v0_machine_init(MachineState *machine)
             return;
         }
         cpu->cluster_mmu = DEVICE(&s->soc.mmu);
-        cpu->cluster_mmu_cfg_base = memmap[RVTNG_V0_MMU].base;
         cpu->cluster_mmu_port = i & 3;
     }
 

@@ -41,10 +41,6 @@ typedef struct RvtngMmuState {
     uint64_t dram_size;        /* real shm size (bounds PTW reads)    */
     bool eager_tlb_flush;      /* flush QEMU TLBs on every config write */
     bool forward_config;       /* mirror config writes to the CModel  */
-    char *translate_scope;     /* "all" | "dram-uram"                 */
-
-    /* Derived from translate-scope at realize time. */
-    bool scope_all;
 
     MemoryRegion *dram_mr;     /* link, owned by the machine          */
 } RvtngMmuState;

@@ -8,7 +8,9 @@
  * the golden-vector suites on both sides.  The RTL boundary behaviors
  * (FixMap 39-bit arithmetic, PDC non-G-restoring hits, ERROR_SLV_MASK
  * stored but unconsumed, negative entries only for PTW faults) are
- * modeled here.  This file must stay QEMU-header-free.
+ * modeled here.  Only addresses at/above RVTNG_MMU_DRAM_BASE (2 GiB)
+ * are translated; lower addresses pass through identity.  This file
+ * must stay QEMU-header-free.
  */
 
 #include "hw/riscv/rvtng_mmu_core.h"
@@ -623,6 +625,16 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
             }                                         \
             return pa;                                \
         } while (0)
+
+    /* Hardware topology: the ClusterMMU slave ports only observe bus
+     * addresses at/above the DRAM base (2 GiB).  Everything below --
+     * the URAM aperture, all control space and the MMU's own APB
+     * page -- is routed around the translation engine and passes
+     * through identity regardless of FixMap or page-table state. */
+    if (va < RVTNG_MMU_DRAM_BASE) {
+        pa = va;
+        MMU_RETURN();
+    }
 
     /* NULL cfg: snapshot the config image at entry (slave AR/AW
      * acceptance).  Non-NULL: the caller pinned the image at capture

@@ -36,13 +36,6 @@
 #include "hw/riscv/rvtng-intf.h"
 #include "trace.h"
 
-/* SoC aperture constants used by translate-scope=dram-uram (kept local
- * to avoid a include cycle with hw/riscv/rvtng_v0.h). */
-#define RVTNG_MMU_URAM_BASE       0x00800000ull
-#define RVTNG_MMU_URAM_STRIDE     0x00200000ull
-#define RVTNG_MMU_URAM_CORES      8
-#define RVTNG_MMU_DRAM_BUS_BASE   0x80000000ull
-
 /*
  * Redirect-shim window (rvtng_mmu_redirect_tlb_pa()): one sparse region
  * per redirect class, laid out so that the offset within a class region
@@ -291,21 +284,6 @@ static const char *rvtng_mmu_acc_name(RvtngMmuAccess acc)
     }
 }
 
-static bool rvtng_mmu_scope_covers(RvtngMmuState *s, uint64_t gpa)
-{
-    if (s->scope_all) {
-        return true;
-    }
-    /* dram-uram: only the data apertures are translated, low control
-     * space stays pass-through (bring-up mode). */
-    if (gpa >= RVTNG_MMU_URAM_BASE &&
-        gpa < RVTNG_MMU_URAM_BASE +
-              RVTNG_MMU_URAM_CORES * RVTNG_MMU_URAM_STRIDE) {
-        return true;
-    }
-    return gpa >= RVTNG_MMU_DRAM_BUS_BASE;
-}
-
 uint64_t rvtng_cluster_mmu_xlate(DeviceState *dev, uint64_t gpa,
                                  RvtngMmuAccess acc, unsigned port,
                                  RvtngMmuFault *fault_out)
@@ -314,10 +292,6 @@ uint64_t rvtng_cluster_mmu_xlate(DeviceState *dev, uint64_t gpa,
     RvtngMmuFault fault = RVTNG_MMU_FAULT_NONE;
     RvtngMmuPageSize page_size = RVTNG_MMU_PAGE_4K;
     uint64_t pa;
-
-    if (!rvtng_mmu_scope_covers(s, gpa)) {
-        return gpa;
-    }
 
     qemu_mutex_lock(&s->lock);
     pa = rvtng_mmu_core_translate(&s->core, gpa, acc, port,
@@ -575,15 +549,12 @@ static const MemoryRegionOps rvtng_mmu_ops = {
 /* QOM plumbing                                                        */
 /* ------------------------------------------------------------------ */
 
-static void rvtng_mmu_realize_scope(RvtngMmuState *s);
-
 static void rvtng_mmu_realize(DeviceState *dev, Error **errp)
 {
     RvtngMmuState *s = RVTNG_MMU(dev);
     MemoryRegionSection occupied;
 
     qemu_mutex_init(&s->lock);
-    rvtng_mmu_realize_scope(s);
     rvtng_mmu_core_init(&s->core);
     if (s->dram_mr) {
         rvtng_mmu_core_bind_dram(&s->core,
@@ -655,23 +626,9 @@ static const Property rvtng_mmu_properties[] = {
                      false),
     DEFINE_PROP_BOOL("forward-config", RvtngMmuState, forward_config,
                      true),
-    DEFINE_PROP_STRING("translate-scope", RvtngMmuState, translate_scope),
     DEFINE_PROP_LINK("dram-mr", RvtngMmuState, dram_mr,
                      TYPE_MEMORY_REGION, MemoryRegion *),
 };
-
-static void rvtng_mmu_realize_scope(RvtngMmuState *s)
-{
-    /* translate-scope is validated at realize time; see
-     * rvtng_mmu_scope_covers() for the runtime meaning. */
-    s->scope_all = !s->translate_scope ||
-                   strcmp(s->translate_scope, "all") == 0;
-    if (!s->scope_all && strcmp(s->translate_scope, "dram-uram") != 0) {
-        warn_report("rvtng-mmu: unknown translate-scope '%s', using 'all'",
-                    s->translate_scope);
-        s->scope_all = true;
-    }
-}
 
 static void rvtng_mmu_class_init(ObjectClass *klass, const void *data)
 {

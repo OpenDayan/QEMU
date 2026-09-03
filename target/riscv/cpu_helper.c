@@ -1768,8 +1768,10 @@ static void pmu_tlb_fill_incr_ctr(RISCVCPU *cpu, MMUAccessType access_type)
  * and redirect selection).
  *
  * Runs after get_physical_address()/PMP: RISC-V paging and PMP are CPU
- * properties, the ClusterMMU sits downstream on the bus.  MMARE CPUs of
- * other machines leave cluster_mmu == NULL and keep the old fast path.
+ * properties, the ClusterMMU sits downstream on the bus.  Only bus
+ * addresses at/above the 2 GiB DRAM base reach the MMU; lower addresses
+ * never enter this helper.  CPUs of other machines leave
+ * cluster_mmu == NULL and keep the old fast path.
  */
 static hwaddr riscv_cpu_cluster_mmu_xlate(CPURISCVState *env, hwaddr gpa,
                                           MMUAccessType access_type,
@@ -1784,12 +1786,6 @@ static hwaddr riscv_cpu_cluster_mmu_xlate(CPURISCVState *env, hwaddr gpa,
 
     *fault = RVTNG_MMU_FAULT_NONE;
     if (!cpu->cluster_mmu) {
-        return gpa;
-    }
-    /* The MMU's own APB window stays outside translation so that the
-     * configuration page is reachable from any page-table state. */
-    if (gpa >= cpu->cluster_mmu_cfg_base &&
-        gpa < cpu->cluster_mmu_cfg_base + RVTNG_MMU_APB_SIZE) {
         return gpa;
     }
     return rvtng_cluster_mmu_xlate(cpu->cluster_mmu, gpa,
@@ -1924,7 +1920,14 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
     }
 
     if (ret == TRANSLATE_SUCCESS) {
-        if (cpu->cluster_mmu) {
+        /*
+         * Below the 2 GiB DRAM base the ClusterMMU is not on the address
+         * path at all, so those fills must keep the stock QEMU entry:
+         * the PMP-derived tlb_size, the full RISC-V/PMP prot and no
+         * custom attrs (clamping and prot narrowing here would only
+         * model an MMU that never sees these accesses).
+         */
+        if (cpu->cluster_mmu && pa >= RVTNG_MMU_DRAM_BASE) {
             RvtngMmuFault mmu_fault;
             MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
             hwaddr mmu_va = pa;

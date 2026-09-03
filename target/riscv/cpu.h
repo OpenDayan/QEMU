@@ -554,7 +554,6 @@ struct ArchCPU {
      * cluster_mmu == NULL keeps the plain pass-through fast path.
      */
     DeviceState *cluster_mmu;
-    hwaddr cluster_mmu_cfg_base;
     uint8_t cluster_mmu_port;
 
     QEMUTimer *pmu_timer;
