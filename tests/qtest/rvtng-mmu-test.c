@@ -19,7 +19,7 @@
 #define RVTNG_DRAM_SHM_NAME "/dram_shm_0"
 #define RVTNG_DRAM_SIZE     (16ULL * 1024 * 1024 * 1024)
 
-#define RVTNG_MMU_BASE 0x8000ull
+#define RVTNG_MMU_BASE 0x5000ull
 
 static char *firmware_path;
 static bool owns_dram_shm;

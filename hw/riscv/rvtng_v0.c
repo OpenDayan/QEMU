@@ -62,7 +62,7 @@ static const MemMapEntry rvtng_v0_memmap[] = {
     [RVTNG_V0_MAILBOX]           = {     0x1000,        0x1000 },
     [RVTNG_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
     [RVTNG_V0_ATOMIC_CACHE_CONTROL] = {  0x4000,        0x1000 },
-    [RVTNG_V0_MMU]               = {     0x8000,        0x1000 },
+    [RVTNG_V0_MMU]               = {     0x5000,        0x1000 },
     [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
     [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
     [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
@@ -73,7 +73,7 @@ static const MemMapEntry rvtng_v0_memmap[] = {
 /*
  * The debug controller, error device, PCU, and PLIC apertures
  * intentionally remain unassigned until those models are implemented.
- * The ClusterMMU aperture is modeled by TYPE_RVTNG_MMU at 0x8000.
+ * The ClusterMMU aperture is modeled by TYPE_RVTNG_MMU at 0x5000.
  */
 
 static uint64_t rvtng_atomic_cache_control_read(void *opaque, hwaddr offset,
