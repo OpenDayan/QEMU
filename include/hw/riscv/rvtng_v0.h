@@ -24,7 +24,7 @@ typedef struct RVTNGV0SoCState {
 
     /*< public >*/
     RISCVHartArrayState cpus;
-    qemu_irq rnmi_irqs[RVTNG_MAX_CALC_CORES];
+    qemu_irq tensor_irqs[RVTNG_MAX_CALC_CORES];
     MemoryRegion rom;
     MemoryRegion mailbox;
     MemoryRegion intc;

@@ -542,8 +542,8 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
         return;
     }
     for (int core_idx = 0; core_idx < num_harts; core_idx++) {
-        s->rnmi_irqs[core_idx] = qdev_get_gpio_in_named(
-            DEVICE(&s->cpus.harts[core_idx]), "riscv.cpu.rnmi", 0);
+        s->tensor_irqs[core_idx] = qdev_get_gpio_in(
+            DEVICE(&s->cpus.harts[core_idx]), IRQ_M_EXT);
     }
 
     /* Dayan CLINT IPI registers and software-interrupt outputs. */
@@ -658,7 +658,7 @@ int frontend_interrupt_update_service(int core_idx, int level)
         bql_unlock();
         return 0;
     }
-    qemu_set_irq(s->soc.rnmi_irqs[core_idx], level != 0);
+    qemu_set_irq(s->soc.tensor_irqs[core_idx], level != 0);
     bql_unlock();
     return 1;
 }
