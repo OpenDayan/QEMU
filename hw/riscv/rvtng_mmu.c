@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include <poll.h>
 #include "qemu/error-report.h"
 #include "qemu/thread.h"
 #include "qapi/error.h"
@@ -171,6 +172,34 @@ static void rvtng_mmu_fwd_ensure_started(void)
     qemu_thread_create(&thread, "rvtng-mmu-fwd",
                        rvtng_mmu_fwd_thread, NULL,
                        QEMU_THREAD_DETACHED);
+}
+
+bool rvtng_cmodel_resource_clear(uint32_t mask)
+{
+    uint64_t status = 1;
+    bool ok = false;
+    int fd;
+
+    if (!mask) {
+        return true;
+    }
+    rvtng_mmu_fwd_ensure_started();
+    qemu_mutex_lock(&fwd_lock);
+    fd = qatomic_read(&fwd_fd);
+    if (fd >= 0) {
+        struct pollfd reply = { .fd = fd, .events = POLLIN };
+
+        ok = rvt_socket_push(fd, 0x22) == 0 &&
+             rvt_socket_push(fd, mask) == 0 &&
+             poll(&reply, 1, 5000) == 1 &&
+             rvt_socket_pop(fd, &status) == 0;
+        if (!ok) {
+            qatomic_set(&fwd_fd, -1);
+            close(fd);
+        }
+    }
+    qemu_mutex_unlock(&fwd_lock);
+    return ok && status == 0;
 }
 
 static void rvtng_mmu_fwd_send(RvtngMmuState *s, uint16_t off,

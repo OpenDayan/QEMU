@@ -327,12 +327,16 @@ int fuse_prepare_mount(void)
 {
     struct fuse_args args = FUSE_ARGS_INIT(4, fuse_argv);
     struct fuse_cmdline_opts opts;
+    const char *mountpoint = getenv("NPU_DEVICE_PREFIX");
     int rc;
 
     if (fioc_fuse != NULL) {
         return 0;
     }
 
+    if (mountpoint != NULL && mountpoint[0] != '\0') {
+        fuse_argv[3] = (char *)mountpoint;
+    }
     memset(&opts, 0, sizeof(opts));
     rc = fuse_parse_cmdline(&args, &opts);
     if (rc != 0 || opts.mountpoint == NULL) {

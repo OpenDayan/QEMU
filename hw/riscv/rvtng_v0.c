@@ -63,6 +63,7 @@ static const MemMapEntry rvtng_v0_memmap[] = {
     [RVTNG_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
     [RVTNG_V0_ATOMIC_CACHE_CONTROL] = {  0x4000,        0x1000 },
     [RVTNG_V0_MMU]               = {     0x5000,        0x1000 },
+    [RVTNG_V0_RESOURCE_CONTROL]  = {     0x6000,        0x1000 },
     [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
     [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
     [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
@@ -75,6 +76,32 @@ static const MemMapEntry rvtng_v0_memmap[] = {
  * intentionally remain unassigned until those models are implemented.
  * The ClusterMMU aperture is modeled by TYPE_RVTNG_MMU at 0x5000.
  */
+
+static MemTxResult rvtng_resource_control_read(void *opaque, hwaddr offset,
+                                              uint64_t *value, unsigned size,
+                                              MemTxAttrs attrs)
+{
+    *value = 0;
+    return MEMTX_OK;
+}
+
+static MemTxResult rvtng_resource_control_write(void *opaque, hwaddr offset,
+                                               uint64_t value, unsigned size,
+                                               MemTxAttrs attrs)
+{
+    if (offset != 0) {
+        return MEMTX_OK;
+    }
+    return rvtng_cmodel_resource_clear((uint32_t)value) ? MEMTX_OK : MEMTX_ERROR;
+}
+
+static const MemoryRegionOps rvtng_resource_control_ops = {
+    .read_with_attrs = rvtng_resource_control_read,
+    .write_with_attrs = rvtng_resource_control_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 4, .max_access_size = 8 },
+    .impl = { .min_access_size = 4, .max_access_size = 8 },
+};
 
 static uint64_t rvtng_atomic_cache_control_read(void *opaque, hwaddr offset,
                                                 unsigned size)
@@ -597,6 +624,15 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
         system_memory, memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].base,
         &s->atomic_cache_control);
 
+    /* Shared Resource table initialization, forwarded to the CModel. */
+    memory_region_init_io(&s->resource_control, OBJECT(dev),
+                          &rvtng_resource_control_ops, s,
+                          "rvtng.v0.resource-control",
+                          memmap[RVTNG_V0_RESOURCE_CONTROL].size);
+    memory_region_add_subregion(system_memory,
+                                memmap[RVTNG_V0_RESOURCE_CONTROL].base,
+                                &s->resource_control);
+
     /* Atomic-cache data window is currently modeled as fixed RAM. */
     if (!memory_region_init_ram(&s->atomic_cache, OBJECT(dev),
                                 "rvtng.v0.atomic-cache",
@@ -715,22 +751,21 @@ static void rvtng_v0_machine_init(MachineState *machine)
         exit(EXIT_FAILURE);
     }
     memory_region_init_ram_ptr(&s->dram, OBJECT(machine), "rvtng.dram",
-                               16UL * 1024 * 1024 * 1024, dram);
+                               machine->ram_size, dram);
     memory_region_add_subregion(system_memory,
                                 memmap[RVTNG_V0_DRAM].base, &s->dram);
 
     /*
      * ClusterMMU (scalar ports 0..3).  Realized here rather than in the
      * SoC because the PTW reader binds the shared DRAM image, which only
-     * exists once the region above is created.  dram-size tracks the
-     * actual shm size; the region declaration is larger on purpose.
+     * exists once the region above is created.
      */
     object_property_set_link(OBJECT(&s->soc.mmu), "dram-mr",
                              OBJECT(&s->dram), &error_fatal);
     qdev_prop_set_uint64(DEVICE(&s->soc.mmu), "dram-base",
                          memmap[RVTNG_V0_DRAM].base);
     qdev_prop_set_uint64(DEVICE(&s->soc.mmu), "dram-size",
-                         RVTNG_MMU_DEFAULT_DRAM_SIZE);
+                         machine->ram_size);
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->soc.mmu), &error_fatal)) {
         return;
     }

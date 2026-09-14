@@ -74,4 +74,7 @@ hwaddr rvtng_mmu_redirect_tlb_pa(DeviceState *dev, RvtngMmuFault fault,
 MemTxAttrs rvtng_mmu_redirect_tlb_attrs(unsigned port, RvtngMmuAccess acc,
                                         uint64_t va);
 
+/* Synchronous ResourceGlobalMgr clear over the CModel control channel. */
+bool rvtng_cmodel_resource_clear(uint32_t mask);
+
 #endif /* HW_RISCV_RVTNG_MMU_H */

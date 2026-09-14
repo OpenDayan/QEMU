@@ -32,6 +32,7 @@ typedef struct RVTNGV0SoCState {
     uint32_t intc_enable;
     uint64_t intc_mailbox[RVTNG_INTC_MAILBOX_COUNT];
     MemoryRegion atomic_cache_control;
+    MemoryRegion resource_control;
     uint64_t atomic_cache_status;
     uint64_t atomic_cache_backing_base;
     MemoryRegion clint_ipi;
@@ -66,6 +67,7 @@ enum {
     RVTNG_V0_INTERRUPT_HANDLER,
     RVTNG_V0_ATOMIC_CACHE_CONTROL,
     RVTNG_V0_MMU,
+    RVTNG_V0_RESOURCE_CONTROL,
     RVTNG_V0_ROM,
     RVTNG_V0_CLINT,
     RVTNG_V0_ATOMIC_CACHE,
