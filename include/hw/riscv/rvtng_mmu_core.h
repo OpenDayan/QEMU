@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Single behavioral implementation of the ClusterMMU, shared by the QEMU
- * rvtng_mmu device, the rvtng-cmodel C++ shell (emu/mmu.cpp) and the
+ * rvtng_mmu device, the Dayan-emu C++ shell (emu/mmu.cpp) and the
  * golden-vector suites on both sides.  RTL boundary behaviors (FixMap
  * 39-bit arithmetic, PDC non-G-restoring hits, ERROR_SLV_MASK stored but
  * unconsumed, negative entries only for PTW faults) are modeled here.
@@ -84,7 +84,7 @@ typedef RvtngMmuPteRead (*RvtngMmuPteReaderFn)(void *opaque, uint64_t pa);
 /*
  * APB4 register offsets (12-bit intra-page addresses).  The golden
  * vector suites (tests/unit/test-rvtng-mmu.c and
- * rvtng-cmodel/tests/mmu_test.cpp) guard this table against RTL drift.
+ * dayan-emu/tests/mmu_test.cpp) guard this table against RTL drift.
  */
 #define RVTNG_MMU_REG_PTW_BASE_LO          0x000
 #define RVTNG_MMU_REG_PTW_BASE_HI          0x004
@@ -119,7 +119,7 @@ typedef RvtngMmuPteRead (*RvtngMmuPteReaderFn)(void *opaque, uint64_t pa);
 
 /*
  * Classification used by the QEMU device to decide which accepted APB
- * writes are mirrored to the CModel side (see docs qemu-MMU guide
+ * writes are mirrored to the Dayan-emu side (see docs qemu-MMU guide
  * section 6.10.3): translation-semantic configuration goes out as a raw
  * register write, flush events are reported as their own message class
  * and pure status registers are never forwarded.
@@ -154,7 +154,7 @@ typedef struct RvtngMmuPdcEntry {
  * Extended translate provenance: which PTE bus reads the page walk
  * issued, the leaf PTE observed, and whether the result came from the
  * fault redirect path.  Plain rvtng_mmu_core_translate() discards
- * these; the CModel's translation result exposes them.
+ * these; the Dayan-emu's translation result exposes them.
  */
 typedef struct RvtngMmuTranslateDetail {
     uint64_t walk_addresses[3];
@@ -212,7 +212,7 @@ extern "C" {
 void rvtng_mmu_core_init(RvtngMmuCore *c);
 
 /* Bind the shared DRAM image used by PTW reads.  PTW reads outside
- * [base, base + size - 8] return bus_error, matching the CModel
+ * [base, base + size - 8] return bus_error, matching the Dayan-emu
  * make_dram_reader(). */
 void rvtng_mmu_core_bind_dram(RvtngMmuCore *c, const void *host,
                               uint64_t base, uint64_t size);
@@ -259,7 +259,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
                                        RvtngMmuPageSize *page_size_out,
                                        RvtngMmuTranslateDetail *detail_out);
 
-/* Flush semantics mirror the CModel: full or ASID-selective clear,
+/* Flush semantics mirror the Dayan-emu: full or ASID-selective clear,
  * global entries survive ASID flushes, sticky DONE/ERR status. */
 void rvtng_mmu_core_flush(RvtngMmuCore *c, bool asid_sel, uint8_t asid);
 void rvtng_mmu_core_ack_flush(RvtngMmuCore *c);

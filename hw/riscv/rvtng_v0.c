@@ -92,7 +92,7 @@ static MemTxResult rvtng_resource_control_write(void *opaque, hwaddr offset,
     if (offset != 0) {
         return MEMTX_OK;
     }
-    return rvtng_cmodel_resource_clear((uint32_t)value) ? MEMTX_OK : MEMTX_ERROR;
+    return rvtng_dayan_emu_resource_clear((uint32_t)value) ? MEMTX_OK : MEMTX_ERROR;
 }
 
 static const MemoryRegionOps rvtng_resource_control_ops = {
@@ -624,7 +624,7 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
         system_memory, memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].base,
         &s->atomic_cache_control);
 
-    /* Shared Resource table initialization, forwarded to the CModel. */
+    /* Shared Resource table initialization, forwarded to the Dayan-emu. */
     memory_region_init_io(&s->resource_control, OBJECT(dev),
                           &rvtng_resource_control_ops, s,
                           "rvtng.v0.resource-control",

@@ -12,13 +12,13 @@
  * concurrently with MMIO register writes, all under one QemuMutex.
  * Everything QEMU-global (tlb_flush) happens outside the lock.
  *
- * Config sync with the CModel process: accepted translation-semantic
+ * Config sync with the Dayan-emu process: accepted translation-semantic
  * register writes are mirrored to a dedicated push-only Unix socket
  * (/tmp/card0_rvt_mmu) as {0x20, addr, value}; flush triggers go out as
- * {0x21, mode|asid<<8}.  The CModel owns the listening end and applies
+ * {0x21, mode|asid<<8}.  The Dayan-emu owns the listening end and applies
  * every message to all of its per-core mmu_t instances.  Writes made
  * while disconnected are kept in a shadow image, and (re)connects start
- * with a full replay plus flush, so the CModel always converges to the
+ * with a full replay plus flush, so the Dayan-emu always converges to the
  * QEMU-side config.  See the qemu-MMU implementation guide section 6.10.
  */
 
@@ -59,8 +59,8 @@
     ((hwaddr)RVTNG_MMU_REDIRECT_SLOTS * RVTNG_MMU_REDIRECT_VA_SPACE)
 
 /* Config-sync socket: the connect thread retries indefinitely so that
- * a CModel backend which appears late (normal non--S startup) is still
- * synced; running without any CModel costs one failing connect() per
+ * a Dayan-emu backend which appears late (normal non--S startup) is still
+ * synced; running without any Dayan-emu costs one failing connect() per
  * retry interval and never stalls the guest. */
 #define RVTNG_MMU_FWD_SOCKET_PATH RVT_MMU_SOCKET_PATH
 #define RVTNG_MMU_FWD_RETRIES     100
@@ -72,7 +72,7 @@ static const VMStateDescription vmstate_rvtng_mmu;
 static void rvtng_mmu_reset_hold(Object *obj, ResetType type);
 
 /* ------------------------------------------------------------------ */
-/* Config forwarding to the CModel                                     */
+/* Config forwarding to the Dayan-emu                                     */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -110,7 +110,7 @@ static void *rvtng_mmu_fwd_thread(void *opaque)
                     /*
                      * The peer may have missed every write made before
                      * it started listening: replay the whole shadow
-                     * image, then flush so no CModel translation
+                     * image, then flush so no Dayan-emu translation
                      * cached under the stale config survives.
                      */
                     for (off = 0; ok && off < RVTNG_MMU_APB_SIZE;
@@ -134,7 +134,7 @@ static void *rvtng_mmu_fwd_thread(void *opaque)
                         close(fd);
                         if (!fwd_warn_lost) {
                             fwd_warn_lost = true;
-                            warn_report("rvtng-mmu: CModel config-sync "
+                            warn_report("rvtng-mmu: Dayan-emu config-sync "
                                         "peer lost during config replay");
                         }
                     }
@@ -147,7 +147,7 @@ static void *rvtng_mmu_fwd_thread(void *opaque)
                 if (++failures == RVTNG_MMU_FWD_RETRIES &&
                     !fwd_warn_connect) {
                     fwd_warn_connect = true;
-                    warn_report("rvtng-mmu: no CModel config-sync peer at "
+                    warn_report("rvtng-mmu: no Dayan-emu config-sync peer at "
                                 "%s yet; register writes are buffered "
                                 "until it connects",
                                 RVTNG_MMU_FWD_SOCKET_PATH);
@@ -174,7 +174,7 @@ static void rvtng_mmu_fwd_ensure_started(void)
                        QEMU_THREAD_DETACHED);
 }
 
-bool rvtng_cmodel_resource_clear(uint32_t mask)
+bool rvtng_dayan_emu_resource_clear(uint32_t mask)
 {
     uint64_t status = 1;
     bool ok = false;
@@ -215,7 +215,7 @@ static void rvtng_mmu_fwd_send(RvtngMmuState *s, uint16_t off,
     cls = flush_trigger ? RVTNG_MMU_FWD_FLUSH
                         : rvtng_mmu_core_classify_write(off);
     if (cls == RVTNG_MMU_FWD_NONE) {
-        /* Status registers and undefined addresses have no CModel
+        /* Status registers and undefined addresses have no Dayan-emu
          * counterpart; FLUSH_DONE/ERR stay QEMU-authoritative. */
         return;
     }
@@ -260,7 +260,7 @@ static void rvtng_mmu_fwd_send(RvtngMmuState *s, uint16_t off,
         close(fd);
         if (!fwd_warn_lost) {
             fwd_warn_lost = true;
-            warn_report("rvtng-mmu: CModel config-sync peer lost; "
+            warn_report("rvtng-mmu: Dayan-emu config-sync peer lost; "
                         "register writes are buffered until it "
                         "reconnects");
         }
@@ -271,7 +271,7 @@ static void rvtng_mmu_fwd_send(RvtngMmuState *s, uint16_t off,
 /*
  * Rebuild the shadow image from the live config and drop the socket so
  * the connect thread replays the new image (ending in a flush) into
- * the CModel.  Runs from reset and post-load, both under the BQL like
+ * the Dayan-emu.  Runs from reset and post-load, both under the BQL like
  * every register writer, so the config reads need no extra locking.
  */
 static void rvtng_mmu_fwd_resync(RvtngMmuState *s)
@@ -593,7 +593,7 @@ static void rvtng_mmu_realize(DeviceState *dev, Error **errp)
     if (s->forward_config) {
         /*
          * Connect (and replay the config image) as early as possible,
-         * not on the first forwarded write: the CModel closes its
+         * not on the first forwarded write: the Dayan-emu closes its
          * tensor instruction path until the initial replay lands, so
          * both sides should already be talking before the guest starts.
          */
@@ -638,7 +638,7 @@ static void rvtng_mmu_reset_hold(Object *obj, ResetType type)
                                  memory_region_get_ram_ptr(s->dram_mr),
                                  s->dram_base, s->dram_size);
     }
-    /* vCPUs clear their own TLBs in the same reset sweep.  The CModel,
+    /* vCPUs clear their own TLBs in the same reset sweep.  The Dayan-emu,
      * however, survives a guest reset: resync the socket so its config
      * image and translation caches return to the reset image too. */
     rvtng_mmu_fwd_resync(s);
@@ -702,7 +702,7 @@ static int rvtng_mmu_post_load(void *opaque, int version_id)
     qemu_mutex_lock(&s->lock);
     rvtng_mmu_core_flush(&s->core, false, 0);
     qemu_mutex_unlock(&s->lock);
-    /* The CModel never saw the migrated config; resync replays the
+    /* The Dayan-emu never saw the migrated config; resync replays the
      * restored image into it. */
     rvtng_mmu_fwd_resync(s);
     return 0;

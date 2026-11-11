@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Golden scenario suite for hw/riscv/rvtng_mmu_core.c.  The scenarios
- * and expected values mirror rvtng-cmodel/tests/mmu_test.cpp, whose
+ * and expected values mirror dayan-emu/tests/mmu_test.cpp, whose
  * assertions are aligned against the ClusterMMU RTL; keeping both
  * suites scenario-identical is the drift guard for the C/C++ dual
  * implementation (guide decision D7).
@@ -114,7 +114,7 @@ static void setup_svm(RvtngMmuCore *c, FakePageTable *t)
     rvtng_mmu_core_init(c);
     rvtng_mmu_core_set_reader(c, fake_read, t);
     /* Disable FixMap (active-low register) and point the PTW at the
-     * fake root, mirroring make_mmu() in the CModel suite. */
+     * fake root, mirroring make_mmu() in the Dayan-emu suite. */
     g_assert_true(rvtng_mmu_core_write_reg(c, RVTNG_MMU_REG_N_FIX_MAP_EN, 1));
     g_assert_true(rvtng_mmu_core_write_reg(
         c, RVTNG_MMU_REG_PTW_BASE_LO, (uint32_t)kRoot));

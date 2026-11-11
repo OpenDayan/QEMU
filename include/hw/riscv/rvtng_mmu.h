@@ -5,7 +5,7 @@
  * One instance models the ClusterMMU of one cluster: the APB4 register
  * image, the shared L2/PDC caches and the 8-port translation engine.
  * The QEMU vCPUs (scalar ports 0..3) run their load/store/fetch
- * addresses through rvtng_cluster_mmu_xlate(); the CModel tensor LSU
+ * addresses through rvtng_cluster_mmu_xlate(); the Dayan-emu tensor LSU
  * ports 4..7 keep their own per-process instance.
  */
 
@@ -40,7 +40,7 @@ typedef struct RvtngMmuState {
     uint64_t dram_base;        /* bus base of the DRAM image          */
     uint64_t dram_size;        /* real shm size (bounds PTW reads)    */
     bool eager_tlb_flush;      /* flush QEMU TLBs on every config write */
-    bool forward_config;       /* mirror config writes to the CModel  */
+    bool forward_config;       /* mirror config writes to the Dayan-emu  */
 
     MemoryRegion *dram_mr;     /* link, owned by the machine          */
 } RvtngMmuState;
@@ -74,7 +74,7 @@ hwaddr rvtng_mmu_redirect_tlb_pa(DeviceState *dev, RvtngMmuFault fault,
 MemTxAttrs rvtng_mmu_redirect_tlb_attrs(unsigned port, RvtngMmuAccess acc,
                                         uint64_t va);
 
-/* Synchronous ResourceGlobalMgr clear over the CModel control channel. */
-bool rvtng_cmodel_resource_clear(uint32_t mask);
+/* Synchronous ResourceGlobalMgr clear over the Dayan-emu control channel. */
+bool rvtng_dayan_emu_resource_clear(uint32_t mask);
 
 #endif /* HW_RISCV_RVTNG_MMU_H */

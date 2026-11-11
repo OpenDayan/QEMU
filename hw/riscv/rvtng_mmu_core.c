@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Single behavioral implementation of the ClusterMMU, shared by the
- * QEMU rvtng_mmu device, the rvtng-cmodel C++ shell (emu/mmu.cpp) and
+ * QEMU rvtng_mmu device, the Dayan-emu C++ shell (emu/mmu.cpp) and
  * the golden-vector suites on both sides.  The RTL boundary behaviors
  * (FixMap 39-bit arithmetic, PDC non-G-restoring hits, ERROR_SLV_MASK
  * stored but unconsumed, negative entries only for PTW faults) are
@@ -844,7 +844,7 @@ static void invalidate_asid(RvtngMmuCore *c, uint8_t asid)
 void rvtng_mmu_core_flush(RvtngMmuCore *c, bool asid_sel, uint8_t asid)
 {
     /* The synchronous model never reports busy; keep the reject path
-     * for parity with the CModel. */
+     * for parity with the Dayan-emu. */
     if (c->flush_busy) {
         c->flush_error_code = 1;
         return;

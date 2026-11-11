@@ -248,7 +248,7 @@ static void test_rvtng_mmu_registers(void)
     }
 
     /* forward-config must stay off: the suite must never talk to a
-     * live CModel config-sync socket.  The dotted type name requires
+     * live Dayan-emu config-sync socket.  The dotted type name requires
      * the explicit key=value -global form (the short form splits at
      * the first dot). */
     args = g_strdup_printf("-machine rvtng-v0 -smp 4 -bios %s "
