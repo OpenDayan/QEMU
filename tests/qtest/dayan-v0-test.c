@@ -1,5 +1,5 @@
 /*
- * QTest testcase for the RVTNG-V0 cluster platform
+ * QTest testcase for the dayan-v0 cluster platform
  *
  * Copyright (c) 2026 Institute of Computing Technology,
  * Chinese Academy of Sciences
@@ -9,18 +9,18 @@
 #include "qemu/osdep.h"
 #include "qemu/bitops.h"
 #include "qemu/cutils.h"
-#include "hw/riscv/rvtng_fuse.h"
+#include "hw/riscv/dayan_fuse.h"
 #include "libqtest.h"
 
-#define RVTNG_DRAM_SHM_NAME "/dram_shm_0"
-#define RVTNG_DRAM_SIZE     (16ULL * 1024 * 1024 * 1024)
+#define DAYAN_DRAM_SHM_NAME "/dram_shm_0"
+#define DAYAN_DRAM_SIZE     (16ULL * 1024 * 1024 * 1024)
 
-#define RVTNG_MAILBOX_BASE      0x1000
-#define RVTNG_CLINT_BASE        0x20000
-#define RVTNG_ATOMIC_CACHE_BASE 0x400000
-#define RVTNG_URAM_BASE         0x800000
-#define RVTNG_URAM_SIZE         0x180000
-#define RVTNG_URAM_STRIDE       0x200000
+#define DAYAN_MAILBOX_BASE      0x1000
+#define DAYAN_CLINT_BASE        0x20000
+#define DAYAN_ATOMIC_CACHE_BASE 0x400000
+#define DAYAN_URAM_BASE         0x800000
+#define DAYAN_URAM_SIZE         0x180000
+#define DAYAN_URAM_STRIDE       0x200000
 
 #define DAYAN_CLINT_IPI_BASE       0x100
 #define DAYAN_CLINT_IPI_HART_SIZE  0x10
@@ -34,24 +34,24 @@
 static char *firmware_path;
 static bool owns_dram_shm;
 
-static void rvtng_v0_test_cleanup(void)
+static void dayan_v0_test_cleanup(void)
 {
     if (firmware_path) {
         unlink(firmware_path);
         g_clear_pointer(&firmware_path, g_free);
     }
     if (owns_dram_shm) {
-        shm_unlink(RVTNG_DRAM_SHM_NAME);
+        shm_unlink(DAYAN_DRAM_SHM_NAME);
         owns_dram_shm = false;
     }
 }
 
-static void rvtng_v0_test_abrt(void *opaque)
+static void dayan_v0_test_abrt(void *opaque)
 {
-    rvtng_v0_test_cleanup();
+    dayan_v0_test_cleanup();
 }
 
-static bool rvtng_v0_test_prepare(void)
+static bool dayan_v0_test_prepare(void)
 {
     char uram_name[32];
     int dram_fd;
@@ -64,16 +64,16 @@ static bool rvtng_v0_test_prepare(void)
         uram_fd = shm_open(uram_name, O_RDONLY, 0);
         if (uram_fd >= 0) {
             close(uram_fd);
-            g_test_skip("an RVTNG URAM shared-memory object is in use");
+            g_test_skip("an Dayan URAM shared-memory object is in use");
             return false;
         }
         if (errno != ENOENT) {
-            g_test_skip("cannot safely inspect RVTNG URAM shared memory");
+            g_test_skip("cannot safely inspect Dayan URAM shared memory");
             return false;
         }
     }
 
-    dram_fd = shm_open(RVTNG_DRAM_SHM_NAME,
+    dram_fd = shm_open(DAYAN_DRAM_SHM_NAME,
                        O_CREAT | O_EXCL | O_RDWR, 0600);
     if (dram_fd < 0 && errno == EEXIST) {
         g_test_skip("/dram_shm_0 is already in use");
@@ -81,10 +81,10 @@ static bool rvtng_v0_test_prepare(void)
     }
     g_assert_cmpint(dram_fd, >=, 0);
     owns_dram_shm = true;
-    g_assert_cmpint(ftruncate(dram_fd, RVTNG_DRAM_SIZE), ==, 0);
+    g_assert_cmpint(ftruncate(dram_fd, DAYAN_DRAM_SIZE), ==, 0);
     close(dram_fd);
 
-    firmware_fd = g_file_open_tmp("rvtng-v0-qtest-XXXXXX.bin",
+    firmware_fd = g_file_open_tmp("dayan-v0-qtest-XXXXXX.bin",
                                   &firmware_path, NULL);
     g_assert_cmpint(firmware_fd, >=, 0);
     g_assert_cmpint(ftruncate(firmware_fd, 4), ==, 0);
@@ -95,11 +95,11 @@ static bool rvtng_v0_test_prepare(void)
 
 static uint64_t dayan_clint_ipi_reg(unsigned hart, uint64_t reg)
 {
-    return RVTNG_CLINT_BASE + DAYAN_CLINT_IPI_BASE +
+    return DAYAN_CLINT_BASE + DAYAN_CLINT_IPI_BASE +
            hart * DAYAN_CLINT_IPI_HART_SIZE + reg;
 }
 
-static QTestState *rvtng_v0_qtest_init(const char *args)
+static QTestState *dayan_v0_qtest_init(const char *args)
 {
     QTestState *qts;
     int saved_stdout;
@@ -119,37 +119,37 @@ static QTestState *rvtng_v0_qtest_init(const char *args)
 
 static void test_interrupt_handler(QTestState *qts)
 {
-    uint64_t base = RVTNG_INTC_BASE;
-    uint64_t mailbox0 = base + RVTNG_INTC_MAILBOX0_OFF;
+    uint64_t base = DAYAN_INTC_BASE;
+    uint64_t mailbox0 = base + DAYAN_INTC_MAILBOX0_OFF;
     uint64_t mailbox31 = mailbox0 + 31 * sizeof(uint64_t);
 
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_STATUS_OFF), ==, 0);
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_ENABLE_OFF), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_STATUS_OFF), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_ENABLE_OFF), ==, 0);
     g_assert_cmphex(qtest_readq(qts, mailbox0), ==, 1);
     g_assert_cmphex(qtest_readq(qts, mailbox31), ==, 1);
 
     /* STATUS and ENABLE are read-only. */
-    qtest_writel(qts, base + RVTNG_INTC_STATUS_OFF, UINT32_MAX);
-    qtest_writel(qts, base + RVTNG_INTC_ENABLE_OFF, UINT32_MAX);
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_STATUS_OFF), ==, 0);
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_ENABLE_OFF), ==, 0);
+    qtest_writel(qts, base + DAYAN_INTC_STATUS_OFF, UINT32_MAX);
+    qtest_writel(qts, base + DAYAN_INTC_ENABLE_OFF, UINT32_MAX);
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_STATUS_OFF), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_ENABLE_OFF), ==, 0);
 
-    qtest_writel(qts, base + RVTNG_INTC_SET_OFF, BIT(5));
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_STATUS_OFF), ==,
+    qtest_writel(qts, base + DAYAN_INTC_SET_OFF, BIT(5));
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_STATUS_OFF), ==,
                     BIT(5));
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_CLEAR_OFF), ==,
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_CLEAR_OFF), ==,
                     BIT(5));
-    qtest_writel(qts, base + RVTNG_INTC_CLEAR_OFF, BIT(5));
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_STATUS_OFF), ==, 0);
+    qtest_writel(qts, base + DAYAN_INTC_CLEAR_OFF, BIT(5));
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_STATUS_OFF), ==, 0);
 
-    qtest_writel(qts, base + RVTNG_INTC_ENABLE_SET_OFF, BIT(5));
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_ENABLE_OFF), ==,
+    qtest_writel(qts, base + DAYAN_INTC_ENABLE_SET_OFF, BIT(5));
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_ENABLE_OFF), ==,
                     BIT(5));
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_ENABLE_CLEAR_OFF), ==,
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_ENABLE_CLEAR_OFF), ==,
                     BIT(5));
 
-    qtest_writel(qts, base + RVTNG_INTC_ENABLE_CLEAR_OFF, BIT(5));
-    g_assert_cmphex(qtest_readl(qts, base + RVTNG_INTC_ENABLE_OFF), ==, 0);
+    qtest_writel(qts, base + DAYAN_INTC_ENABLE_CLEAR_OFF, BIT(5));
+    g_assert_cmphex(qtest_readl(qts, base + DAYAN_INTC_ENABLE_OFF), ==, 0);
 
     qtest_writeq(qts, mailbox0, UINT64_C(0x1122334455667788));
     qtest_writeb(qts, mailbox0 + 7, 0xaa);
@@ -159,34 +159,34 @@ static void test_interrupt_handler(QTestState *qts)
 
 static void test_atomic_cache_control(QTestState *qts)
 {
-    const uint64_t base = RVTNG_ATOMIC_CACHE_CONTROL_BASE;
+    const uint64_t base = DAYAN_ATOMIC_CACHE_CONTROL_BASE;
     const uint64_t backing = UINT64_C(0x80c00000);
 
     g_assert_cmphex(qtest_readq(
-                        qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF),
+                        qts, base + DAYAN_ATOMIC_CACHE_STATUS_OFF),
                     ==, 0);
     g_assert_cmphex(qtest_readq(
-                        qts, base + RVTNG_ATOMIC_CACHE_BACKING_OFF),
+                        qts, base + DAYAN_ATOMIC_CACHE_BACKING_OFF),
                     ==, 0);
 
-    qtest_writeq(qts, base + RVTNG_ATOMIC_CACHE_BACKING_OFF, backing);
+    qtest_writeq(qts, base + DAYAN_ATOMIC_CACHE_BACKING_OFF, backing);
     g_assert_cmphex(qtest_readq(
-                        qts, base + RVTNG_ATOMIC_CACHE_BACKING_OFF),
+                        qts, base + DAYAN_ATOMIC_CACHE_BACKING_OFF),
                     ==, backing);
     g_assert_cmphex(qtest_readq(
-                        qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF),
-                    ==, RVTNG_ATOMIC_CACHE_STATUS_DONE);
+                        qts, base + DAYAN_ATOMIC_CACHE_STATUS_OFF),
+                    ==, DAYAN_ATOMIC_CACHE_STATUS_DONE);
 
-    qtest_writeq(qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF, 1);
+    qtest_writeq(qts, base + DAYAN_ATOMIC_CACHE_STATUS_OFF, 1);
     g_assert_cmphex(qtest_readq(
-                        qts, base + RVTNG_ATOMIC_CACHE_STATUS_OFF),
-                    ==, RVTNG_ATOMIC_CACHE_STATUS_DONE);
+                        qts, base + DAYAN_ATOMIC_CACHE_STATUS_OFF),
+                    ==, DAYAN_ATOMIC_CACHE_STATUS_DONE);
 }
 
 static void test_clint(QTestState *qts)
 {
-    uint64_t legacy0 = RVTNG_CLINT_BASE;
-    uint64_t legacy1 = RVTNG_CLINT_BASE + sizeof(uint32_t);
+    uint64_t legacy0 = DAYAN_CLINT_BASE;
+    uint64_t legacy1 = DAYAN_CLINT_BASE + sizeof(uint32_t);
     uint64_t status0 = dayan_clint_ipi_reg(0, DAYAN_CLINT_IPI_STATUS);
     uint64_t enable0 = dayan_clint_ipi_reg(0, DAYAN_CLINT_IPI_ENABLE);
     uint64_t pending0 = dayan_clint_ipi_reg(0, DAYAN_CLINT_IPI_PENDING);
@@ -226,14 +226,14 @@ static void test_clint(QTestState *qts)
     g_assert_cmphex(qtest_readl(qts, legacy1), ==, 1);
     g_assert_cmphex(qtest_readl(qts, legacy0), ==, 0);
 
-    g_assert_cmphex(qtest_readq(qts, RVTNG_CLINT_BASE +
+    g_assert_cmphex(qtest_readq(qts, DAYAN_CLINT_BASE +
                                 DAYAN_CLINT_MTIMECMP), ==, UINT64_MAX);
-    qtest_writeq(qts, RVTNG_CLINT_BASE + DAYAN_CLINT_MTIMECMP,
+    qtest_writeq(qts, DAYAN_CLINT_BASE + DAYAN_CLINT_MTIMECMP,
                  UINT64_C(0x123456789abcdef0));
-    g_assert_cmphex(qtest_readq(qts, RVTNG_CLINT_BASE +
+    g_assert_cmphex(qtest_readq(qts, DAYAN_CLINT_BASE +
                                 DAYAN_CLINT_MTIMECMP), ==,
                     UINT64_C(0x123456789abcdef0));
-    g_assert_cmphex(qtest_readq(qts, RVTNG_CLINT_BASE + DAYAN_CLINT_MTIME),
+    g_assert_cmphex(qtest_readq(qts, DAYAN_CLINT_BASE + DAYAN_CLINT_MTIME),
                     ==, 0);
 }
 
@@ -243,17 +243,17 @@ static void test_memory_windows(QTestState *qts)
         uint64_t address;
         uint64_t value;
     } accesses[] = {
-        { RVTNG_MAILBOX_BASE, UINT64_C(0x0102030405060708) },
-        { RVTNG_ATOMIC_CACHE_BASE, UINT64_C(0x1111111122222222) },
-        { RVTNG_URAM_BASE - 8, UINT64_C(0x3333333344444444) },
-        { RVTNG_URAM_BASE, UINT64_C(0x5000000000000000) },
-        { RVTNG_URAM_BASE + RVTNG_URAM_STRIDE,
+        { DAYAN_MAILBOX_BASE, UINT64_C(0x0102030405060708) },
+        { DAYAN_ATOMIC_CACHE_BASE, UINT64_C(0x1111111122222222) },
+        { DAYAN_URAM_BASE - 8, UINT64_C(0x3333333344444444) },
+        { DAYAN_URAM_BASE, UINT64_C(0x5000000000000000) },
+        { DAYAN_URAM_BASE + DAYAN_URAM_STRIDE,
           UINT64_C(0x6000000000000000) },
-        { RVTNG_URAM_BASE + 2 * RVTNG_URAM_STRIDE,
+        { DAYAN_URAM_BASE + 2 * DAYAN_URAM_STRIDE,
           UINT64_C(0x7000000000000000) },
-        { RVTNG_URAM_BASE + 3 * RVTNG_URAM_STRIDE,
+        { DAYAN_URAM_BASE + 3 * DAYAN_URAM_STRIDE,
           UINT64_C(0x8000000000000000) },
-        { RVTNG_URAM_BASE + 3 * RVTNG_URAM_STRIDE + RVTNG_URAM_SIZE - 8,
+        { DAYAN_URAM_BASE + 3 * DAYAN_URAM_STRIDE + DAYAN_URAM_SIZE - 8,
           UINT64_C(0x99999999aaaaaaaa) },
     };
 
@@ -264,28 +264,28 @@ static void test_memory_windows(QTestState *qts)
     }
 }
 
-static void test_rvtng_v0_cluster(void)
+static void test_dayan_v0_cluster(void)
 {
     g_autofree char *args = NULL;
     g_autofree char *mtree = NULL;
     QTestState *qts;
 
-    if (!rvtng_v0_test_prepare()) {
+    if (!dayan_v0_test_prepare()) {
         return;
     }
 
-    args = g_strdup_printf("-machine rvtng-v0 -smp 4 -bios %s",
+    args = g_strdup_printf("-machine dayan-v0 -smp 4 -bios %s",
                            firmware_path);
-    qts = rvtng_v0_qtest_init(args);
+    qts = dayan_v0_qtest_init(args);
 
     mtree = qtest_hmp(qts, "info mtree");
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.mailbox"));
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.interrupt-handler"));
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.atomic-cache-control"));
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.rom"));
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.clint.ipi"));
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.atomic-cache"));
-    g_assert_nonnull(strstr(mtree, "rvtng.v0.uram_3"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.mailbox"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.interrupt-handler"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.atomic-cache-control"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.rom"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.clint.ipi"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.atomic-cache"));
+    g_assert_nonnull(strstr(mtree, "dayan.v0.uram_3"));
 
     test_interrupt_handler(qts);
     test_atomic_cache_control(qts);
@@ -293,28 +293,28 @@ static void test_rvtng_v0_cluster(void)
     test_memory_windows(qts);
 
     qtest_system_reset(qts);
-    g_assert_cmphex(qtest_readl(qts, RVTNG_INTC_BASE +
-                                RVTNG_INTC_STATUS_OFF), ==, 0);
-    g_assert_cmphex(qtest_readl(qts, RVTNG_INTC_BASE +
-                                RVTNG_INTC_ENABLE_OFF), ==, 0);
-    g_assert_cmphex(qtest_readq(qts, RVTNG_INTC_BASE +
-                                RVTNG_INTC_MAILBOX0_OFF), ==, 1);
+    g_assert_cmphex(qtest_readl(qts, DAYAN_INTC_BASE +
+                                DAYAN_INTC_STATUS_OFF), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DAYAN_INTC_BASE +
+                                DAYAN_INTC_ENABLE_OFF), ==, 0);
+    g_assert_cmphex(qtest_readq(qts, DAYAN_INTC_BASE +
+                                DAYAN_INTC_MAILBOX0_OFF), ==, 1);
     g_assert_cmphex(qtest_readq(
-                        qts, RVTNG_ATOMIC_CACHE_CONTROL_BASE +
-                                 RVTNG_ATOMIC_CACHE_STATUS_OFF),
+                        qts, DAYAN_ATOMIC_CACHE_CONTROL_BASE +
+                                 DAYAN_ATOMIC_CACHE_STATUS_OFF),
                     ==, 0);
     g_assert_cmphex(qtest_readq(
-                        qts, RVTNG_ATOMIC_CACHE_CONTROL_BASE +
-                                 RVTNG_ATOMIC_CACHE_BACKING_OFF),
+                        qts, DAYAN_ATOMIC_CACHE_CONTROL_BASE +
+                                 DAYAN_ATOMIC_CACHE_BACKING_OFF),
                     ==, 0);
-    g_assert_cmphex(qtest_readl(qts, RVTNG_CLINT_BASE), ==, 0);
+    g_assert_cmphex(qtest_readl(qts, DAYAN_CLINT_BASE), ==, 0);
     g_assert_cmphex(qtest_readl(qts, dayan_clint_ipi_reg(
                                 0, DAYAN_CLINT_IPI_ENABLE)), ==, 1);
-    g_assert_cmphex(qtest_readq(qts, RVTNG_CLINT_BASE +
+    g_assert_cmphex(qtest_readq(qts, DAYAN_CLINT_BASE +
                                 DAYAN_CLINT_MTIMECMP), ==, UINT64_MAX);
 
     qtest_quit(qts);
-    rvtng_v0_test_cleanup();
+    dayan_v0_test_cleanup();
 }
 
 int main(int argc, char **argv)
@@ -322,13 +322,13 @@ int main(int argc, char **argv)
     int ret;
 
     g_test_init(&argc, &argv, NULL);
-    qtest_add_abrt_handler(rvtng_v0_test_abrt, NULL);
+    qtest_add_abrt_handler(dayan_v0_test_abrt, NULL);
 
-    if (qtest_has_machine("rvtng-v0")) {
-        qtest_add_func("/rvtng-v0/cluster", test_rvtng_v0_cluster);
+    if (qtest_has_machine("dayan-v0")) {
+        qtest_add_func("/dayan-v0/cluster", test_dayan_v0_cluster);
     }
 
     ret = g_test_run();
-    rvtng_v0_test_cleanup();
+    dayan_v0_test_cleanup();
     return ret;
 }

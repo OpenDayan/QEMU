@@ -129,7 +129,7 @@ config XIANGSHAN_KUNMINGHU
     select RISCV_IMSIC
     select SERIAL_MM
 
-config RVTNG_V0
+config DAYAN_V0
     bool
     default y
     depends on RISCV64

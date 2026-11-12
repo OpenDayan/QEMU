@@ -28,7 +28,7 @@
 #include "system/replay.h"
 #include "system/system.h"
 #include "system/memory.h"
-#include "hw/riscv/rvtng-intf.h"
+#include "hw/riscv/dayan-intf.h"
 
 #ifdef CONFIG_SDL
 /*
@@ -78,19 +78,19 @@ int (*qemu_main)(void) = os_darwin_cfrunloop_main;
 #endif
 
 // Global Intf for inter-call
-extern RVTPackQ_t rvtPackQ[RVTNG_MAX_CALC_CORES];
-extern RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
+extern DayanPackQ_t dayanPackQ[DAYAN_MAX_CALC_CORES];
+extern DayanCommitQ_t dayanCommitQ[DAYAN_MAX_CALC_CORES];
 extern int fuse_init(void);
 extern int fuse_prepare_mount(void);
-const int rvtSimBackendEnable = 1;
+const int dayanSimBackendEnable = 1;
 
 static int true_main(int argc, char **argv)
 {
     ATTRIBUTE_UNUSED int ret = system("umount /tmp/virtual_npu");
     bool use_fuse_loop = qemu_main == NULL;
     int instReqFd, instRspFd, msgFd;
-    rvt_inst_socket_pair_t instSockets;
-    rvt_msg_socket_t msgSocket;
+    dayan_inst_socket_pair_t instSockets;
+    dayan_msg_socket_t msgSocket;
     pthread_t instServe, msgServe;
     int thread_error;
 
@@ -100,9 +100,9 @@ static int true_main(int argc, char **argv)
 
     qemu_init(argc, argv);
     // Initialize queues for all cores
-    for(int i = 0; i < RVTNG_MAX_CALC_CORES; i++) {
-        RVTPackQ_init(&rvtPackQ[i], 32);
-        RVTCommitQ_init(&rvtCommitQ[i], 32);
+    for(int i = 0; i < DAYAN_MAX_CALC_CORES; i++) {
+        DayanPackQ_init(&dayanPackQ[i], 32);
+        DayanCommitQ_init(&dayanCommitQ[i], 32);
     }
     frontend_init(&msgFd, &instReqFd, &instRspFd);
     instSockets.fdReq = instReqFd;
@@ -180,28 +180,28 @@ int frontend_dram_write_service(char *buf, size_t size, off_t addr)
 }
 
 // Backend Tensor Instructions API
-int frontend_instruction_fetch_service(int coreIdx, rvt_pack_t* pkg) {
+int frontend_instruction_fetch_service(int coreIdx, dayan_pack_t* pkg) {
     // Validate coreIdx range
-    if(coreIdx < 0 || coreIdx >= RVTNG_MAX_CALC_CORES) {
+    if(coreIdx < 0 || coreIdx >= DAYAN_MAX_CALC_CORES) {
         return 0;
     }
 
     // Get instruction from the corresponding core's queue
-    int ret = RVTPackQ_try_take(&rvtPackQ[coreIdx], pkg);
+    int ret = DayanPackQ_try_take(&dayanPackQ[coreIdx], pkg);
     // if(ret) {
         // printf("QEMU: inst fetched: %lx.\n", pkg->inst);
     // }
     return ret;
 }
 
-int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg) {
+int frontend_instruction_commit_service(int coreIdx, dayan_commit_t* pkg) {
     // Validate coreIdx range
-    if(coreIdx < 0 || coreIdx >= RVTNG_MAX_CALC_CORES) {
+    if(coreIdx < 0 || coreIdx >= DAYAN_MAX_CALC_CORES) {
         return 0;
     }
 
     // Put result into the corresponding core's queue
-    RVTCommitQ_put(&rvtCommitQ[coreIdx], *pkg);
+    DayanCommitQ_put(&dayanCommitQ[coreIdx], *pkg);
     return 1;
 }
 
@@ -214,7 +214,7 @@ int frontend_instruction_commit_service(int coreIdx, rvt_commit_t* pkg) {
 
 static int redirect_qemu_log(void)
 {
-    const char *log_path = getenv("RVTNG_QEMU_LOG");
+    const char *log_path = getenv("DAYAN_QEMU_LOG");
 
     if (log_path == NULL || log_path[0] == '\0') {
         return 0;
@@ -222,7 +222,7 @@ static int redirect_qemu_log(void)
 
     int log_fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (log_fd == -1) {
-        fprintf(stderr, "QEMU: cannot open RVTNG_QEMU_LOG '%s': %s\n",
+        fprintf(stderr, "QEMU: cannot open DAYAN_QEMU_LOG '%s': %s\n",
                 log_path, strerror(errno));
         return -1;
     }

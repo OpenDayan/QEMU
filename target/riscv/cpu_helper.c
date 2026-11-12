@@ -37,7 +37,7 @@
 #include "debug.h"
 #include "pmp.h"
 #include "qemu/plugin.h"
-#include "hw/riscv/rvtng_mmu.h"
+#include "hw/riscv/dayan_mmu.h"
 
 int riscv_env_mmu_index(CPURISCVState *env, bool ifetch)
 {
@@ -1760,7 +1760,7 @@ static void pmu_tlb_fill_incr_ctr(RISCVCPU *cpu, MMUAccessType access_type)
 }
 
 /*
- * ClusterMMU (rvtng-v0 SoC): run the bus address emitted by this hart
+ * ClusterMMU (dayan-v0 SoC): run the bus address emitted by this hart
  * through the ClusterMMU model.  This is the software equivalent of the
  * scalar AXI5 AR/AW address passing the hardware ClusterMMU slave port
  * (spec: one address translation per access, fault replaces the master
@@ -1775,20 +1775,20 @@ static void pmu_tlb_fill_incr_ctr(RISCVCPU *cpu, MMUAccessType access_type)
  */
 static hwaddr riscv_cpu_cluster_mmu_xlate(CPURISCVState *env, hwaddr gpa,
                                           MMUAccessType access_type,
-                                          RvtngMmuFault *fault)
+                                          DayanMmuFault *fault)
 {
     RISCVCPU *cpu = env_archcpu(env);
-    static const RvtngMmuAccess map[3] = {
-        [MMU_INST_FETCH] = RVTNG_MMU_EXECUTE,
-        [MMU_DATA_LOAD] = RVTNG_MMU_READ,
-        [MMU_DATA_STORE] = RVTNG_MMU_WRITE,
+    static const DayanMmuAccess map[3] = {
+        [MMU_INST_FETCH] = DAYAN_MMU_EXECUTE,
+        [MMU_DATA_LOAD] = DAYAN_MMU_READ,
+        [MMU_DATA_STORE] = DAYAN_MMU_WRITE,
     };
 
-    *fault = RVTNG_MMU_FAULT_NONE;
+    *fault = DAYAN_MMU_FAULT_NONE;
     if (!cpu->cluster_mmu) {
         return gpa;
     }
-    return rvtng_cluster_mmu_xlate(cpu->cluster_mmu, gpa,
+    return dayan_cluster_mmu_xlate(cpu->cluster_mmu, gpa,
                                    map[access_type], cpu->cluster_mmu_port,
                                    fault);
 }
@@ -1799,7 +1799,7 @@ static hwaddr riscv_cpu_cluster_mmu_xlate(CPURISCVState *env, hwaddr gpa,
  * (stop-the-world, then a guaranteed abort on the serial retry), so a
  * redirect can never be applied to the atomic's store side.  Rather
  * than letting the emulator abort, the translator guards every atomic
- * with helper_rvtng_amo_guard() (op_helper.c), which raises the
+ * with helper_dayan_amo_guard() (op_helper.c), which raises the
  * architectural store/AMO access fault when the ClusterMMU would
  * redirect it; the guest observes the fault with stval set and memory
  * stays untouched.  Atomics whose translation passes run on a normal
@@ -1927,8 +1927,8 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
          * custom attrs (clamping and prot narrowing here would only
          * model an MMU that never sees these accesses).
          */
-        if (cpu->cluster_mmu && pa >= RVTNG_MMU_DRAM_BASE) {
-            RvtngMmuFault mmu_fault;
+        if (cpu->cluster_mmu && pa >= DAYAN_MMU_DRAM_BASE) {
+            DayanMmuFault mmu_fault;
             MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
             hwaddr mmu_va = pa;
 
@@ -1940,7 +1940,7 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
              * TLB entry past the page the model actually translated.
              */
             tlb_size = TARGET_PAGE_SIZE;
-            if (mmu_fault != RVTNG_MMU_FAULT_NONE) {
+            if (mmu_fault != DAYAN_MMU_FAULT_NONE) {
                 /*
                  * A redirect substitutes the whole master address, which
                  * a page-granular TLB entry cannot express: entry-based
@@ -1951,10 +1951,10 @@ bool riscv_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
                  * entry grants only the faulting access type so other
                  * accesses still refill against the real page.
                  */
-                pa = rvtng_mmu_redirect_tlb_pa(cpu->cluster_mmu, mmu_fault,
+                pa = dayan_mmu_redirect_tlb_pa(cpu->cluster_mmu, mmu_fault,
                                                mmu_va);
-                attrs = rvtng_mmu_redirect_tlb_attrs(cpu->cluster_mmu_port,
-                                                     (RvtngMmuAccess)access_type,
+                attrs = dayan_mmu_redirect_tlb_attrs(cpu->cluster_mmu_port,
+                                                     (DayanMmuAccess)access_type,
                                                      mmu_va);
                 prot &= access_type == MMU_INST_FETCH ? PAGE_EXEC :
                         access_type == MMU_DATA_STORE ? PAGE_WRITE :

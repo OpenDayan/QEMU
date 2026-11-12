@@ -19,8 +19,8 @@
  */
 
 #include "qemu/osdep.h"
-#include "hw/riscv/rvtng-intf.h"
-#include "hw/riscv/rvtng_mmu.h"
+#include "hw/riscv/dayan-intf.h"
+#include "hw/riscv/dayan_mmu.h"
 #include "cpu.h"
 #include "internals.h"
 #include "exec/cputlb.h"
@@ -71,17 +71,17 @@ G_NORETURN void riscv_raise_exception(CPURISCVState *env,
  * normal RAM mapping and are unaffected.  Only addresses at/above the
  * 2 GiB DRAM base can be redirected at all.
  */
-void helper_rvtng_amo_guard(CPURISCVState *env, target_ulong addr)
+void helper_dayan_amo_guard(CPURISCVState *env, target_ulong addr)
 {
     RISCVCPU *cpu = env_archcpu(env);
-    RvtngMmuFault fault = RVTNG_MMU_FAULT_NONE;
+    DayanMmuFault fault = DAYAN_MMU_FAULT_NONE;
 
-    if (!cpu->cluster_mmu || addr < RVTNG_MMU_DRAM_BASE) {
+    if (!cpu->cluster_mmu || addr < DAYAN_MMU_DRAM_BASE) {
         return;
     }
-    rvtng_cluster_mmu_xlate(cpu->cluster_mmu, addr, RVTNG_MMU_WRITE,
+    dayan_cluster_mmu_xlate(cpu->cluster_mmu, addr, DAYAN_MMU_WRITE,
                             cpu->cluster_mmu_port, &fault);
-    if (fault != RVTNG_MMU_FAULT_NONE) {
+    if (fault != DAYAN_MMU_FAULT_NONE) {
         env->badaddr = addr;
         riscv_raise_exception(env, RISCV_EXCP_STORE_AMO_ACCESS_FAULT,
                               GETPC());
@@ -811,45 +811,45 @@ done:
     riscv_raise_exception(env, exception, GETPC());
 }
 
-RVTPackQ_t rvtPackQ[RVTNG_MAX_CALC_CORES];
-RVTCommitQ_t rvtCommitQ[RVTNG_MAX_CALC_CORES];
+DayanPackQ_t dayanPackQ[DAYAN_MAX_CALC_CORES];
+DayanCommitQ_t dayanCommitQ[DAYAN_MAX_CALC_CORES];
 
-extern const int rvtSimBackendEnable;
+extern const int dayanSimBackendEnable;
 // Tensor Instructions helper
 target_ulong helper_tx_all(CPURISCVState *env, target_ulong rs1,
                           target_ulong rs2, target_ulong rd, 
                           uint32_t inst
                         )
 {
-    if(rvtSimBackendEnable) {
+    if(dayanSimBackendEnable) {
         // Get current CPU core ID
         CPUState *cpu = env_cpu(env);
         int core_id = cpu->cpu_index;
 
         // Validate core ID
-        if(core_id < 0 || core_id >= RVTNG_MAX_CALC_CORES) {
+        if(core_id < 0 || core_id >= DAYAN_MAX_CALC_CORES) {
             printf("Error: Invalid core_id %d\n", core_id);
             return rd;
         }
 
         // Issue Instructions
-        rvt_pack_t rvt_inst;
-        rvt_inst.inst = inst; rvt_inst.rd = rd;
-        rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
-        rvt_inst.timestamp = 0; // No Performance simulation.
-        RVTPackQ_put(&rvtPackQ[core_id], rvt_inst);
+        dayan_pack_t dayan_inst;
+        dayan_inst.inst = inst; dayan_inst.rd = rd;
+        dayan_inst.rs2 = rs2;   dayan_inst.rs1 = rs1;
+        dayan_inst.timestamp = 0; // No Performance simulation.
+        DayanPackQ_put(&dayanPackQ[core_id], dayan_inst);
         // Check if TCSR Read Instruction
         if((inst & 0b11111000000000000001000000000000) == 0b00000000000000000001000000000000) {
             // need write
             uint8_t rdIdx = (inst >> 7) & 0x1f;
-            rvt_commit_t cmt;
+            dayan_commit_t cmt;
             // cmt.rd = 0;
             // while(cmt.rd == 0) {
                 // Filiter All Unneeded Commit.
-                cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
+                cmt = DayanCommitQ_take(&dayanCommitQ[core_id]);
             // }
             if(cmt.rd != rdIdx) {
-                printf("Core %d: Got miss matched RVTCommit, Expect: R%d, Got: R%ld!\n", core_id, rdIdx, cmt.rd);
+                printf("Core %d: Got miss matched Dayan commit, Expect: R%d, Got: R%ld!\n", core_id, rdIdx, cmt.rd);
             }
             target_ulong ret = cmt.data;
             // Scoreboard
@@ -873,28 +873,28 @@ void helper_tx64_all(CPURISCVState *env, target_ulong rs1,
                           uint64_t inst
                         )
 {
-    if(rvtSimBackendEnable) {
+    if(dayanSimBackendEnable) {
         // Get current CPU core ID
         CPUState *cpu = env_cpu(env);
         int core_id = cpu->cpu_index;
 
         // Validate core ID
-        if(core_id < 0 || core_id >= RVTNG_MAX_CALC_CORES) {
+        if(core_id < 0 || core_id >= DAYAN_MAX_CALC_CORES) {
             printf("Error: Invalid core_id %d\n", core_id);
             // return rd;
             return;
         }
 
         // Issue Instructions
-        rvt_pack_t rvt_inst;
-        rvt_inst.inst = inst; rvt_inst.rd = rd;
-        rvt_inst.rs2 = rs2;   rvt_inst.rs1 = rs1;
-        rvt_inst.timestamp = 0; // No Performance simulation.
-        RVTPackQ_put(&rvtPackQ[core_id], rvt_inst);
+        dayan_pack_t dayan_inst;
+        dayan_inst.inst = inst; dayan_inst.rd = rd;
+        dayan_inst.rs2 = rs2;   dayan_inst.rs1 = rs1;
+        dayan_inst.timestamp = 0; // No Performance simulation.
+        DayanPackQ_put(&dayanPackQ[core_id], dayan_inst);
         // check if need write
         // if((inst & 0b111110000000) != 0) {
         //     // need write
-        //     rvt_commit_t cmt = RVTCommitQ_take(&rvtCommitQ[core_id]);
+        //     dayan_commit_t cmt = DayanCommitQ_take(&dayanCommitQ[core_id]);
         //     target_ulong ret = cmt.data;
         //     return ret;
         // } else {

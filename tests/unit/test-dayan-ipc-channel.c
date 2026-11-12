@@ -1,6 +1,6 @@
 #include "qemu/osdep.h"
 
-#include "hw/riscv/rvtng-intf.h"
+#include "hw/riscv/dayan-intf.h"
 
 static void close_pair(int sockets[2])
 {
@@ -30,7 +30,7 @@ static void test_push_is_one_exact_record(void)
 
     make_pair(sockets);
 
-    g_assert_cmpint(rvt_socket_push(sockets[0], expected), ==, 0);
+    g_assert_cmpint(dayan_socket_push(sockets[0], expected), ==, 0);
     received = recvmsg(sockets[1], &message, 0);
 
     g_assert_cmpint(received, ==, sizeof(expected));
@@ -48,8 +48,8 @@ static void test_round_trip(void)
 
     make_pair(sockets);
 
-    g_assert_cmpint(rvt_socket_push(sockets[0], expected), ==, 0);
-    g_assert_cmpint(rvt_socket_pop(sockets[1], &actual), ==, 0);
+    g_assert_cmpint(dayan_socket_push(sockets[0], expected), ==, 0);
+    g_assert_cmpint(dayan_socket_pop(sockets[1], &actual), ==, 0);
     g_assert_cmpuint(actual, ==, expected);
 
     close_pair(sockets);
@@ -70,7 +70,7 @@ static void test_pop_rejects_fragmented_record(void)
                          sizeof(value) / 2, MSG_NOSIGNAL), ==,
                     sizeof(value) / 2);
 
-    g_assert_cmpint(rvt_socket_pop(sockets[1], &actual), ==, -1);
+    g_assert_cmpint(dayan_socket_pop(sockets[1], &actual), ==, -1);
 
     close_pair(sockets);
 }
@@ -88,7 +88,7 @@ static void test_pop_rejects_oversized_record(void)
 
     g_assert_cmpint(send(sockets[0], record, sizeof(record), MSG_NOSIGNAL), ==,
                     sizeof(record));
-    g_assert_cmpint(rvt_socket_pop(sockets[1], &actual), ==, -1);
+    g_assert_cmpint(dayan_socket_pop(sockets[1], &actual), ==, -1);
 
     close_pair(sockets);
 }
@@ -110,7 +110,7 @@ static void test_tune_leaves_steady_state_timeouts_disabled(void)
     int sockets[2];
 
     make_pair(sockets);
-    rvt_socket_tune(sockets[0]);
+    dayan_socket_tune(sockets[0]);
 
     assert_timeout_disabled(sockets[0], SO_SNDTIMEO);
     assert_timeout_disabled(sockets[0], SO_RCVTIMEO);
@@ -123,11 +123,11 @@ static void assert_interrupt_message(int socket_fd, uint64_t core_idx,
 {
     uint64_t actual = 0;
 
-    g_assert_cmpint(rvt_socket_pop(socket_fd, &actual), ==, 0);
+    g_assert_cmpint(dayan_socket_pop(socket_fd, &actual), ==, 0);
     g_assert_cmpuint(actual, ==, 0x1);
-    g_assert_cmpint(rvt_socket_pop(socket_fd, &actual), ==, 0);
+    g_assert_cmpint(dayan_socket_pop(socket_fd, &actual), ==, 0);
     g_assert_cmpuint(actual, ==, core_idx);
-    g_assert_cmpint(rvt_socket_pop(socket_fd, &actual), ==, 0);
+    g_assert_cmpint(dayan_socket_pop(socket_fd, &actual), ==, 0);
     g_assert_cmpuint(actual, ==, level);
 }
 
@@ -150,16 +150,16 @@ int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
-    g_test_add_func("/rvtng/ipc/push-one-exact-record",
+    g_test_add_func("/dayan/ipc/push-one-exact-record",
                     test_push_is_one_exact_record);
-    g_test_add_func("/rvtng/ipc/round-trip", test_round_trip);
-    g_test_add_func("/rvtng/ipc/reject-fragmented-record",
+    g_test_add_func("/dayan/ipc/round-trip", test_round_trip);
+    g_test_add_func("/dayan/ipc/reject-fragmented-record",
                     test_pop_rejects_fragmented_record);
-    g_test_add_func("/rvtng/ipc/reject-oversized-record",
+    g_test_add_func("/dayan/ipc/reject-oversized-record",
                     test_pop_rejects_oversized_record);
-    g_test_add_func("/rvtng/ipc/no-steady-state-timeouts",
+    g_test_add_func("/dayan/ipc/no-steady-state-timeouts",
                     test_tune_leaves_steady_state_timeouts_disabled);
-    g_test_add_func("/rvtng/ipc/interrupt-level-message",
+    g_test_add_func("/dayan/ipc/interrupt-level-message",
                     test_interrupt_level_message);
 
     return g_test_run();

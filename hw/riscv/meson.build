@@ -14,8 +14,8 @@ riscv_ss.add(when: 'CONFIG_RISCV_IOMMU', if_true: files(
 	'riscv-iommu.c', 'riscv-iommu-pci.c', 'riscv-iommu-sys.c', 'riscv-iommu-hpm.c'))
 riscv_ss.add(when: 'CONFIG_MICROBLAZE_V', if_true: files('microblaze-v-generic.c'))
 riscv_ss.add(when: 'CONFIG_XIANGSHAN_KUNMINGHU', if_true: files('xiangshan_kmh.c'))
-riscv_ss.add(when: 'CONFIG_RVTNG_V0', if_true: files('rvtng_v0.c'))
-riscv_ss.add(when: 'CONFIG_RVTNG_V0', if_true: [files('rvtng_fuse.c'), fuse])
-riscv_ss.add(files('rvtng_mmu_core.c', 'rvtng_mmu.c'))
+riscv_ss.add(when: 'CONFIG_DAYAN_V0', if_true: files('dayan_v0.c'))
+riscv_ss.add(when: 'CONFIG_DAYAN_V0', if_true: [files('dayan_fuse.c'), fuse])
+riscv_ss.add(files('dayan_mmu_core.c', 'dayan_mmu.c'))
 
 hw_arch += {'riscv': riscv_ss}

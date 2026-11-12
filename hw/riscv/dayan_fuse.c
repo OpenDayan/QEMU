@@ -1,8 +1,8 @@
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "system/memory.h"
-#include "hw/riscv/rvtng-intf.h"
-#include "hw/riscv/rvtng_fuse.h"
+#include "hw/riscv/dayan-intf.h"
+#include "hw/riscv/dayan_fuse.h"
 
 #define FUSE_USE_VERSION 35
 
@@ -48,11 +48,11 @@ static void fioc_destroy_poll_handle(struct fuse_pollhandle *ph)
  * Accumulate one event in the aggregated host event counter.
  * The source is decoded by the host via xdma0_user STATUS/MAILBOX.
  */
-void rvtng_fuse_emit_event(int source_id, uint32_t value)
+void dayan_fuse_emit_event(int source_id, uint32_t value)
 {
     struct fuse_pollhandle *ph;
 
-    if (source_id < 0 || source_id >= RVTNG_INTC_MAILBOX_COUNT || value == 0) {
+    if (source_id < 0 || source_id >= DAYAN_INTC_MAILBOX_COUNT || value == 0) {
         return;
     }
 
@@ -72,7 +72,7 @@ void rvtng_fuse_emit_event(int source_id, uint32_t value)
     }
 }
 
-void rvtng_fuse_reset_events(void)
+void dayan_fuse_reset_events(void)
 {
     pthread_mutex_lock(&event_lock);
     event_pending_count = 0;
@@ -123,7 +123,7 @@ static int fioc_getattr(const char *path, struct stat *stbuf,
     case FIOC_USER:
         stbuf->st_mode = S_IFREG | 0666;
         stbuf->st_nlink = 1;
-        stbuf->st_size = RVTNG_USER_SIZE;
+        stbuf->st_size = DAYAN_USER_SIZE;
         stbuf->st_rdev = 10;
         stbuf->st_dev = 10;
         break;
@@ -188,13 +188,13 @@ static int fioc_read(const char *path, char *buf, size_t size,
 
     hwaddr addr = (hwaddr)offset;
     if (ft == FIOC_USER) {
-        if (offset < 0 || (uint64_t)offset + (uint64_t)size > RVTNG_USER_SIZE) {
+        if (offset < 0 || (uint64_t)offset + (uint64_t)size > DAYAN_USER_SIZE) {
             return -EINVAL;
         }
-        addr = RVTNG_USER_BASE + (hwaddr)offset;
+        addr = DAYAN_USER_BASE + (hwaddr)offset;
     }
 
-    /* address_space_read may dispatch to device MMIO (e.g. the rvtng INTC),
+    /* address_space_read may dispatch to device MMIO (e.g. the Dayan INTC),
      * whose handlers mutate shared IRQ state and raise CPU interrupts. Like any
      * QEMU device access from a non-vCPU thread, this must hold the BQL, or it
      * races with the vCPU's interrupt handling and deadlocks on the BQL. */
@@ -256,14 +256,14 @@ static int fioc_write(const char *path, const char *buf, size_t size,
     int ft = (int)fi->fh;
     hwaddr addr = (hwaddr)offset;
     if (ft == FIOC_USER) {
-        if (offset < 0 || (uint64_t)offset + (uint64_t)size > RVTNG_USER_SIZE) {
+        if (offset < 0 || (uint64_t)offset + (uint64_t)size > DAYAN_USER_SIZE) {
             return -EINVAL;
         }
-        addr = RVTNG_USER_BASE + (hwaddr)offset;
+        addr = DAYAN_USER_BASE + (hwaddr)offset;
     }
 
     // printf("QEMU Get fioc_write: 0x%lx, data[0]: 0x%lx\n", offset, *(long*)buf);
-    /* Hold the BQL: a write to the INTC MMIO window runs rvtng_intc_write(),
+    /* Hold the BQL: a write to the INTC MMIO window runs dayan_intc_write(),
      * which updates shared interrupt state and raises IRQs to the vCPU. Doing
      * that lock-free from the FUSE thread races the vCPU's cpu_handle_interrupt
      * path and intermittently deadlocks the machine on the BQL. */

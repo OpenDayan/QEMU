@@ -3311,7 +3311,7 @@ static const TypeInfo riscv_cpu_type_infos[] = {
     ),
 
 
-    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_RVTNG_CALC_V0, TYPE_RISCV_VENDOR_CPU,
+    DEFINE_RISCV_CPU(TYPE_RISCV_CPU_DAYAN_CALC_V0, TYPE_RISCV_VENDOR_CPU,
         .misa_mxl_max = MXL_RV64,
         .misa_ext = RVI | RVM | RVA | RVF | RVU | RVD,
         .priv_spec = PRIV_VERSION_1_12_0,

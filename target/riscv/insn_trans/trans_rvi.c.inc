@@ -1226,7 +1226,7 @@ static bool trans_csrrci(DisasContext *ctx, arg_csrrci * a)
 
 static bool trans_tx_all(DisasContext *ctx, arg_tx_all *a)
 {
-    /* Translate all rvtng instructions to helper function call. */
+    /* Translate all Dayan instructions to helper function call. */
     int extInst = a->inst << 7;
     TCGv rs1 = get_gpr(ctx, (extInst >> 15) & 0x1f, EXT_NONE);
     TCGv rs2 = get_gpr(ctx, (extInst >> 20) & 0x1f, EXT_NONE);

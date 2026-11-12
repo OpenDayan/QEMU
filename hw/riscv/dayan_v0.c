@@ -3,7 +3,7 @@
  * Chinese Academy of Sciences
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * Provides a board compatible with the RVTNG-V0 SoC
+ * Provides a board compatible with the dayan-v0 SoC
  * XCVU13P FPGA prototype platform:
  *
  * 0) Mailbox memory
@@ -37,9 +37,9 @@
 #include "hw/intc/riscv_aclint.h"
 #include "hw/qdev-properties.h"
 #include "hw/riscv/boot.h"
-#include "hw/riscv/rvtng_v0.h"
-#include "hw/riscv/rvtng-intf.h"
-#include "hw/riscv/rvtng_fuse.h"
+#include "hw/riscv/dayan_v0.h"
+#include "hw/riscv/dayan-intf.h"
+#include "hw/riscv/dayan_fuse.h"
 #include "hw/riscv/riscv_hart.h"
 #include "system/reset.h"
 #include "system/system.h"
@@ -56,28 +56,28 @@
 #define DAYAN_CLINT_IPI_APERTURE_SIZE DAYAN_CLINT_MTIMECMP_OFF
 #define DAYAN_CLINT_MTIMER_SIZE       0xc000
 #define DAYAN_CLINT_TIMEBASE_FREQ     1000000
-#define RVTNG_V0_URAM_STRIDE          0x200000
+#define DAYAN_V0_URAM_STRIDE          0x200000
 
-static const MemMapEntry rvtng_v0_memmap[] = {
-    [RVTNG_V0_MAILBOX]           = {     0x1000,        0x1000 },
-    [RVTNG_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
-    [RVTNG_V0_ATOMIC_CACHE_CONTROL] = {  0x4000,        0x1000 },
-    [RVTNG_V0_MMU]               = {     0x5000,        0x1000 },
-    [RVTNG_V0_RESOURCE_CONTROL]  = {     0x6000,        0x1000 },
-    [RVTNG_V0_ROM]               = {    0x10000,       0x10000 },
-    [RVTNG_V0_CLINT]             = {    0x20000,       0x10000 },
-    [RVTNG_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
-    [RVTNG_V0_URAM]              = {   0x800000,      0x180000 },
-    [RVTNG_V0_DRAM]              = { 0x80000000, 0x100000000UL },
+static const MemMapEntry dayan_v0_memmap[] = {
+    [DAYAN_V0_MAILBOX]           = {     0x1000,        0x1000 },
+    [DAYAN_V0_INTERRUPT_HANDLER] = {     0x2000,         0x200 },
+    [DAYAN_V0_ATOMIC_CACHE_CONTROL] = {  0x4000,        0x1000 },
+    [DAYAN_V0_MMU]               = {     0x5000,        0x1000 },
+    [DAYAN_V0_RESOURCE_CONTROL]  = {     0x6000,        0x1000 },
+    [DAYAN_V0_ROM]               = {    0x10000,       0x10000 },
+    [DAYAN_V0_CLINT]             = {    0x20000,       0x10000 },
+    [DAYAN_V0_ATOMIC_CACHE]      = {   0x400000,      0x400000 },
+    [DAYAN_V0_URAM]              = {   0x800000,      0x180000 },
+    [DAYAN_V0_DRAM]              = { 0x80000000, 0x100000000UL },
 };
 
 /*
  * The debug controller, error device, PCU, and PLIC apertures
  * intentionally remain unassigned until those models are implemented.
- * The ClusterMMU aperture is modeled by TYPE_RVTNG_MMU at 0x5000.
+ * The ClusterMMU aperture is modeled by TYPE_DAYAN_MMU at 0x5000.
  */
 
-static MemTxResult rvtng_resource_control_read(void *opaque, hwaddr offset,
+static MemTxResult dayan_resource_control_read(void *opaque, hwaddr offset,
                                               uint64_t *value, unsigned size,
                                               MemTxAttrs attrs)
 {
@@ -85,58 +85,58 @@ static MemTxResult rvtng_resource_control_read(void *opaque, hwaddr offset,
     return MEMTX_OK;
 }
 
-static MemTxResult rvtng_resource_control_write(void *opaque, hwaddr offset,
+static MemTxResult dayan_resource_control_write(void *opaque, hwaddr offset,
                                                uint64_t value, unsigned size,
                                                MemTxAttrs attrs)
 {
     if (offset != 0) {
         return MEMTX_OK;
     }
-    return rvtng_dayan_emu_resource_clear((uint32_t)value) ? MEMTX_OK : MEMTX_ERROR;
+    return dayan_emu_resource_clear((uint32_t)value) ? MEMTX_OK : MEMTX_ERROR;
 }
 
-static const MemoryRegionOps rvtng_resource_control_ops = {
-    .read_with_attrs = rvtng_resource_control_read,
-    .write_with_attrs = rvtng_resource_control_write,
+static const MemoryRegionOps dayan_resource_control_ops = {
+    .read_with_attrs = dayan_resource_control_read,
+    .write_with_attrs = dayan_resource_control_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = { .min_access_size = 4, .max_access_size = 8 },
     .impl = { .min_access_size = 4, .max_access_size = 8 },
 };
 
-static uint64_t rvtng_atomic_cache_control_read(void *opaque, hwaddr offset,
+static uint64_t dayan_atomic_cache_control_read(void *opaque, hwaddr offset,
                                                 unsigned size)
 {
-    RVTNGV0SoCState *s = opaque;
+    DayanV0SoCState *s = opaque;
 
     (void)size;
     switch (offset) {
-    case RVTNG_ATOMIC_CACHE_STATUS_OFF:
+    case DAYAN_ATOMIC_CACHE_STATUS_OFF:
         return s->atomic_cache_status;
-    case RVTNG_ATOMIC_CACHE_BACKING_OFF:
+    case DAYAN_ATOMIC_CACHE_BACKING_OFF:
         return s->atomic_cache_backing_base;
     default:
         return 0;
     }
 }
 
-static void rvtng_atomic_cache_control_write(void *opaque, hwaddr offset,
+static void dayan_atomic_cache_control_write(void *opaque, hwaddr offset,
                                              uint64_t value, unsigned size)
 {
-    RVTNGV0SoCState *s = opaque;
+    DayanV0SoCState *s = opaque;
 
-    if (offset == RVTNG_ATOMIC_CACHE_BACKING_OFF &&
+    if (offset == DAYAN_ATOMIC_CACHE_BACKING_OFF &&
         size == sizeof(s->atomic_cache_backing_base)) {
         s->atomic_cache_backing_base = value;
-        s->atomic_cache_status = RVTNG_ATOMIC_CACHE_STATUS_DONE;
-    } else if (offset == RVTNG_ATOMIC_CACHE_STATUS_OFF && (value & 1)) {
+        s->atomic_cache_status = DAYAN_ATOMIC_CACHE_STATUS_DONE;
+    } else if (offset == DAYAN_ATOMIC_CACHE_STATUS_OFF && (value & 1)) {
         /* The functional cache is not modeled; complete a flush immediately. */
-        s->atomic_cache_status = RVTNG_ATOMIC_CACHE_STATUS_DONE;
+        s->atomic_cache_status = DAYAN_ATOMIC_CACHE_STATUS_DONE;
     }
 }
 
-static const MemoryRegionOps rvtng_atomic_cache_control_ops = {
-    .read = rvtng_atomic_cache_control_read,
-    .write = rvtng_atomic_cache_control_write,
+static const MemoryRegionOps dayan_atomic_cache_control_ops = {
+    .read = dayan_atomic_cache_control_read,
+    .write = dayan_atomic_cache_control_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 1,
@@ -150,7 +150,7 @@ static const MemoryRegionOps rvtng_atomic_cache_control_ops = {
     },
 };
 
-static void rvtng_intc_emit_rising_irq(uint32_t prev_status,
+static void dayan_intc_emit_rising_irq(uint32_t prev_status,
                                        uint32_t prev_enable,
                                        uint32_t new_status,
                                        uint32_t new_enable)
@@ -159,43 +159,43 @@ static void rvtng_intc_emit_rising_irq(uint32_t prev_status,
     uint32_t new_irq = new_status & new_enable;
     uint32_t rising = new_irq & ~prev_irq;
 
-    for (int i = 0; i < RVTNG_INTC_MAILBOX_COUNT; i++) {
+    for (int i = 0; i < DAYAN_INTC_MAILBOX_COUNT; i++) {
         if (rising & (1u << i)) {
-            rvtng_fuse_emit_event(i, 1);
+            dayan_fuse_emit_event(i, 1);
         }
     }
 }
 
-static uint32_t rvtng_intc_ctrl_read(RVTNGV0SoCState *s, hwaddr offset)
+static uint32_t dayan_intc_ctrl_read(DayanV0SoCState *s, hwaddr offset)
 {
     switch (offset) {
-    case RVTNG_INTC_STATUS_OFF:
-    case RVTNG_INTC_SET_OFF:
-    case RVTNG_INTC_CLEAR_OFF:
+    case DAYAN_INTC_STATUS_OFF:
+    case DAYAN_INTC_SET_OFF:
+    case DAYAN_INTC_CLEAR_OFF:
         return s->intc_status;
-    case RVTNG_INTC_ENABLE_OFF:
-    case RVTNG_INTC_ENABLE_SET_OFF:
-    case RVTNG_INTC_ENABLE_CLEAR_OFF:
+    case DAYAN_INTC_ENABLE_OFF:
+    case DAYAN_INTC_ENABLE_SET_OFF:
+    case DAYAN_INTC_ENABLE_CLEAR_OFF:
         return s->intc_enable;
     default:
         return 0;
     }
 }
 
-static uint8_t rvtng_intc_readb(RVTNGV0SoCState *s, hwaddr offset)
+static uint8_t dayan_intc_readb(DayanV0SoCState *s, hwaddr offset)
 {
-    hwaddr mailbox_end = RVTNG_INTC_MAILBOX0_OFF +
-                         RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t);
+    hwaddr mailbox_end = DAYAN_INTC_MAILBOX0_OFF +
+                         DAYAN_INTC_MAILBOX_COUNT * sizeof(uint64_t);
 
-    if (offset < RVTNG_INTC_MAILBOX0_OFF) {
+    if (offset < DAYAN_INTC_MAILBOX0_OFF) {
         hwaddr reg_offset = offset & ~0x3;
         unsigned shift = (offset & 0x3) * 8;
 
-        return rvtng_intc_ctrl_read(s, reg_offset) >> shift;
+        return dayan_intc_ctrl_read(s, reg_offset) >> shift;
     }
 
     if (offset < mailbox_end) {
-        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
+        hwaddr rel = offset - DAYAN_INTC_MAILBOX0_OFF;
         unsigned index = rel / sizeof(uint64_t);
         unsigned shift = (rel % sizeof(uint64_t)) * 8;
 
@@ -205,28 +205,28 @@ static uint8_t rvtng_intc_readb(RVTNGV0SoCState *s, hwaddr offset)
     return 0;
 }
 
-static void rvtng_intc_writeb(RVTNGV0SoCState *s, hwaddr offset,
+static void dayan_intc_writeb(DayanV0SoCState *s, hwaddr offset,
                               uint8_t value)
 {
-    hwaddr mailbox_end = RVTNG_INTC_MAILBOX0_OFF +
-                         RVTNG_INTC_MAILBOX_COUNT * sizeof(uint64_t);
+    hwaddr mailbox_end = DAYAN_INTC_MAILBOX0_OFF +
+                         DAYAN_INTC_MAILBOX_COUNT * sizeof(uint64_t);
 
-    if (offset < RVTNG_INTC_MAILBOX0_OFF) {
+    if (offset < DAYAN_INTC_MAILBOX0_OFF) {
         hwaddr reg_offset = offset & ~0x3;
         unsigned shift = (offset & 0x3) * 8;
         uint32_t bits = (uint32_t)value << shift;
 
         switch (reg_offset) {
-        case RVTNG_INTC_SET_OFF:
+        case DAYAN_INTC_SET_OFF:
             s->intc_status |= bits;
             break;
-        case RVTNG_INTC_CLEAR_OFF:
+        case DAYAN_INTC_CLEAR_OFF:
             s->intc_status &= ~bits;
             break;
-        case RVTNG_INTC_ENABLE_SET_OFF:
+        case DAYAN_INTC_ENABLE_SET_OFF:
             s->intc_enable |= bits;
             break;
-        case RVTNG_INTC_ENABLE_CLEAR_OFF:
+        case DAYAN_INTC_ENABLE_CLEAR_OFF:
             s->intc_enable &= ~bits;
             break;
         default:
@@ -237,7 +237,7 @@ static void rvtng_intc_writeb(RVTNGV0SoCState *s, hwaddr offset,
     }
 
     if (offset < mailbox_end) {
-        hwaddr rel = offset - RVTNG_INTC_MAILBOX0_OFF;
+        hwaddr rel = offset - DAYAN_INTC_MAILBOX0_OFF;
         unsigned index = rel / sizeof(uint64_t);
         unsigned shift = (rel % sizeof(uint64_t)) * 8;
         uint64_t mask = UINT64_C(0xff) << shift;
@@ -251,36 +251,36 @@ static void rvtng_intc_writeb(RVTNGV0SoCState *s, hwaddr offset,
  * Interrupt-handler MMIO bridge shared by guest accesses and xdma0_user.
  * The register layout follows TLInterruptHandler with 32 interrupt sources.
  */
-static void rvtng_intc_write(void *opaque, hwaddr offset, uint64_t value,
+static void dayan_intc_write(void *opaque, hwaddr offset, uint64_t value,
                              unsigned size)
 {
-    RVTNGV0SoCState *s = opaque;
+    DayanV0SoCState *s = opaque;
     uint32_t prev_status = s->intc_status;
     uint32_t prev_enable = s->intc_enable;
 
     for (unsigned i = 0; i < size; i++) {
-        rvtng_intc_writeb(s, offset + i, value >> (i * 8));
+        dayan_intc_writeb(s, offset + i, value >> (i * 8));
     }
 
-    rvtng_intc_emit_rising_irq(prev_status, prev_enable,
+    dayan_intc_emit_rising_irq(prev_status, prev_enable,
                                s->intc_status, s->intc_enable);
 }
 
-static uint64_t rvtng_intc_read(void *opaque, hwaddr offset, unsigned size)
+static uint64_t dayan_intc_read(void *opaque, hwaddr offset, unsigned size)
 {
-    RVTNGV0SoCState *s = opaque;
+    DayanV0SoCState *s = opaque;
     uint64_t value = 0;
 
     for (unsigned i = 0; i < size; i++) {
-        value |= (uint64_t)rvtng_intc_readb(s, offset + i) << (i * 8);
+        value |= (uint64_t)dayan_intc_readb(s, offset + i) << (i * 8);
     }
 
     return value;
 }
 
-static const MemoryRegionOps rvtng_intc_ops = {
-    .read = rvtng_intc_read,
-    .write = rvtng_intc_write,
+static const MemoryRegionOps dayan_intc_ops = {
+    .read = dayan_intc_read,
+    .write = dayan_intc_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 1,
@@ -294,7 +294,7 @@ static const MemoryRegionOps rvtng_intc_ops = {
     },
 };
 
-static void rvtng_clint_update_msip(RVTNGV0SoCState *s, unsigned hart)
+static void dayan_clint_update_msip(DayanV0SoCState *s, unsigned hart)
 {
     bool level = (s->clint_ipi_pending[hart] &
                   s->clint_ipi_enable[hart]) != 0;
@@ -302,7 +302,7 @@ static void rvtng_clint_update_msip(RVTNGV0SoCState *s, unsigned hart)
     qemu_set_irq(s->clint_msip_irq[hart], level);
 }
 
-static uint32_t rvtng_clint_ipi_read_reg(RVTNGV0SoCState *s,
+static uint32_t dayan_clint_ipi_read_reg(DayanV0SoCState *s,
                                          unsigned hart, hwaddr offset)
 {
     switch (offset) {
@@ -318,7 +318,7 @@ static uint32_t rvtng_clint_ipi_read_reg(RVTNGV0SoCState *s,
     }
 }
 
-static uint8_t rvtng_clint_ipi_readb(RVTNGV0SoCState *s, hwaddr offset)
+static uint8_t dayan_clint_ipi_readb(DayanV0SoCState *s, hwaddr offset)
 {
     if (offset < s->num_harts * sizeof(uint32_t)) {
         unsigned hart = offset / sizeof(uint32_t);
@@ -338,14 +338,14 @@ static uint8_t rvtng_clint_ipi_readb(RVTNGV0SoCState *s, hwaddr offset)
             hwaddr reg_offset = hart_offset & ~0x3;
             unsigned shift = (hart_offset & 0x3) * 8;
 
-            return rvtng_clint_ipi_read_reg(s, hart, reg_offset) >> shift;
+            return dayan_clint_ipi_read_reg(s, hart, reg_offset) >> shift;
         }
     }
 
     return 0;
 }
 
-static void rvtng_clint_ipi_writeb(RVTNGV0SoCState *s, hwaddr offset,
+static void dayan_clint_ipi_writeb(DayanV0SoCState *s, hwaddr offset,
                                    uint8_t value)
 {
     if (offset < s->num_harts * sizeof(uint32_t)) {
@@ -392,7 +392,7 @@ static void rvtng_clint_ipi_writeb(RVTNGV0SoCState *s, hwaddr offset,
     }
 }
 
-static bool rvtng_clint_is_pending_set_byte(RVTNGV0SoCState *s,
+static bool dayan_clint_is_pending_set_byte(DayanV0SoCState *s,
                                              hwaddr offset)
 {
     hwaddr rel;
@@ -410,47 +410,47 @@ static bool rvtng_clint_is_pending_set_byte(RVTNGV0SoCState *s,
            (hart_offset & ~0x3) == DAYAN_CLINT_IPI_PENDING_OFF;
 }
 
-static uint64_t rvtng_clint_ipi_read(void *opaque, hwaddr offset,
+static uint64_t dayan_clint_ipi_read(void *opaque, hwaddr offset,
                                      unsigned size)
 {
-    RVTNGV0SoCState *s = opaque;
+    DayanV0SoCState *s = opaque;
     uint64_t value = 0;
 
     for (unsigned i = 0; i < size; i++) {
-        value |= (uint64_t)rvtng_clint_ipi_readb(s, offset + i) <<
+        value |= (uint64_t)dayan_clint_ipi_readb(s, offset + i) <<
                  (i * 8);
     }
 
     return value;
 }
 
-static void rvtng_clint_ipi_write(void *opaque, hwaddr offset,
+static void dayan_clint_ipi_write(void *opaque, hwaddr offset,
                                   uint64_t value, unsigned size)
 {
-    RVTNGV0SoCState *s = opaque;
+    DayanV0SoCState *s = opaque;
 
     /*
      * A wide write can cover PENDING/SET and CLEAR together.  Match the RTL
      * by applying clears first and sets second, so SET wins on overlap.
      */
     for (unsigned i = 0; i < size; i++) {
-        if (!rvtng_clint_is_pending_set_byte(s, offset + i)) {
-            rvtng_clint_ipi_writeb(s, offset + i, value >> (i * 8));
+        if (!dayan_clint_is_pending_set_byte(s, offset + i)) {
+            dayan_clint_ipi_writeb(s, offset + i, value >> (i * 8));
         }
     }
     for (unsigned i = 0; i < size; i++) {
-        if (rvtng_clint_is_pending_set_byte(s, offset + i)) {
-            rvtng_clint_ipi_writeb(s, offset + i, value >> (i * 8));
+        if (dayan_clint_is_pending_set_byte(s, offset + i)) {
+            dayan_clint_ipi_writeb(s, offset + i, value >> (i * 8));
         }
     }
     for (unsigned hart = 0; hart < s->num_harts; hart++) {
-        rvtng_clint_update_msip(s, hart);
+        dayan_clint_update_msip(s, hart);
     }
 }
 
-static const MemoryRegionOps rvtng_clint_ipi_ops = {
-    .read = rvtng_clint_ipi_read,
-    .write = rvtng_clint_ipi_write,
+static const MemoryRegionOps dayan_clint_ipi_ops = {
+    .read = dayan_clint_ipi_read,
+    .write = dayan_clint_ipi_write,
     .endianness = DEVICE_LITTLE_ENDIAN,
     .valid = {
         .min_access_size = 1,
@@ -464,17 +464,17 @@ static const MemoryRegionOps rvtng_clint_ipi_ops = {
     },
 };
 
-static bool rvtng_clint_connect_harts(RVTNGV0SoCState *s, Error **errp)
+static bool dayan_clint_connect_harts(DayanV0SoCState *s, Error **errp)
 {
     for (unsigned hart = 0; hart < s->num_harts; hart++) {
         CPUState *cpu = cpu_by_arch_id(hart);
 
         if (!cpu) {
-            error_setg(errp, "rvtng-v0 CLINT cannot find hart %u", hart);
+            error_setg(errp, "dayan-v0 CLINT cannot find hart %u", hart);
             return false;
         }
         if (riscv_cpu_claim_interrupts(RISCV_CPU(cpu), MIP_MSIP) < 0) {
-            error_setg(errp, "rvtng-v0 hart %u MSIP is already claimed", hart);
+            error_setg(errp, "dayan-v0 hart %u MSIP is already claimed", hart);
             return false;
         }
         s->clint_msip_irq[hart] =
@@ -484,13 +484,13 @@ static bool rvtng_clint_connect_harts(RVTNGV0SoCState *s, Error **errp)
     return true;
 }
 
-static void rvtng_clint_reset_mtimecmp(RVTNGV0SoCState *s)
+static void dayan_clint_reset_mtimecmp(DayanV0SoCState *s)
 {
-    const MemMapEntry *memmap = rvtng_v0_memmap;
+    const MemMapEntry *memmap = dayan_v0_memmap;
 
     for (unsigned hart = 0; hart < s->num_harts; hart++) {
         MemTxResult result;
-        hwaddr address = memmap[RVTNG_V0_CLINT].base +
+        hwaddr address = memmap[DAYAN_V0_CLINT].base +
                          DAYAN_CLINT_MTIMECMP_OFF +
                          hart * sizeof(uint64_t);
 
@@ -498,26 +498,26 @@ static void rvtng_clint_reset_mtimecmp(RVTNGV0SoCState *s)
                              MEMTXATTRS_UNSPECIFIED, &result);
         if (result != MEMTX_OK) {
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "rvtng-v0: failed to reset mtimecmp for hart %u\n",
+                          "dayan-v0: failed to reset mtimecmp for hart %u\n",
                           hart);
         }
     }
 }
 
-static void rvtng_v0_soc_reset_hold(Object *obj, ResetType type)
+static void dayan_v0_soc_reset_hold(Object *obj, ResetType type)
 {
-    RVTNGV0SoCState *s = RVTNG_V0_SOC(obj);
+    DayanV0SoCState *s = DAYAN_V0_SOC(obj);
 
-    rvtng_fuse_reset_events();
+    dayan_fuse_reset_events();
     s->intc_status = 0;
     s->intc_enable = 0;
     s->atomic_cache_status = 0;
     s->atomic_cache_backing_base = 0;
-    for (unsigned i = 0; i < RVTNG_INTC_MAILBOX_COUNT; i++) {
+    for (unsigned i = 0; i < DAYAN_INTC_MAILBOX_COUNT; i++) {
         s->intc_mailbox[i] = 1;
     }
 
-    for (unsigned hart = 0; hart < RVTNG_MAX_CALC_CORES; hart++) {
+    for (unsigned hart = 0; hart < DAYAN_MAX_CALC_CORES; hart++) {
         s->clint_ipi_pending[hart] = 0;
         s->clint_ipi_enable[hart] = 1;
         if (hart < s->num_harts && s->clint_msip_irq[hart]) {
@@ -526,45 +526,45 @@ static void rvtng_v0_soc_reset_hold(Object *obj, ResetType type)
     }
 
     if (s->num_harts) {
-        rvtng_clint_reset_mtimecmp(s);
+        dayan_clint_reset_mtimecmp(s);
     }
 }
 
 /* Global address-space bridge used by the FUSE xdma0_user endpoint. */
 AddressSpace *fuse_as;
 
-static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
+static void dayan_v0_soc_realize(DeviceState *dev, Error **errp)
 {
     MachineState *ms = MACHINE(qdev_get_machine());
-    RVTNGV0SoCState *s = RVTNG_V0_SOC(dev);
-    const MemMapEntry *memmap = rvtng_v0_memmap;
+    DayanV0SoCState *s = DAYAN_V0_SOC(dev);
+    const MemMapEntry *memmap = dayan_v0_memmap;
     MemoryRegion *system_memory = get_system_memory();
     uint32_t num_harts = ms->smp.cpus;
 
-    if (num_harts > RVTNG_MAX_CALC_CORES) {
-        error_setg(errp, "rvtng-v0 supports at most %u harts",
-                   RVTNG_MAX_CALC_CORES);
+    if (num_harts > DAYAN_MAX_CALC_CORES) {
+        error_setg(errp, "dayan-v0 supports at most %u harts",
+                   DAYAN_MAX_CALC_CORES);
         return;
     }
 
-    g_assert(memmap[RVTNG_V0_INTERRUPT_HANDLER].base == RVTNG_INTC_BASE);
-    g_assert(memmap[RVTNG_V0_INTERRUPT_HANDLER].size == RVTNG_INTC_SIZE);
-    g_assert(memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].base ==
-             RVTNG_ATOMIC_CACHE_CONTROL_BASE);
-    g_assert(memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].size ==
-             RVTNG_ATOMIC_CACHE_CONTROL_SIZE);
-    g_assert(memmap[RVTNG_V0_MMU].size == RVTNG_MMU_APB_SIZE);
+    g_assert(memmap[DAYAN_V0_INTERRUPT_HANDLER].base == DAYAN_INTC_BASE);
+    g_assert(memmap[DAYAN_V0_INTERRUPT_HANDLER].size == DAYAN_INTC_SIZE);
+    g_assert(memmap[DAYAN_V0_ATOMIC_CACHE_CONTROL].base ==
+             DAYAN_ATOMIC_CACHE_CONTROL_BASE);
+    g_assert(memmap[DAYAN_V0_ATOMIC_CACHE_CONTROL].size ==
+             DAYAN_ATOMIC_CACHE_CONTROL_SIZE);
+    g_assert(memmap[DAYAN_V0_MMU].size == DAYAN_MMU_APB_SIZE);
     g_assert(DAYAN_CLINT_MTIMECMP_OFF + DAYAN_CLINT_MTIMER_SIZE ==
-             memmap[RVTNG_V0_CLINT].size);
+             memmap[DAYAN_V0_CLINT].size);
     s->num_harts = num_harts;
     fuse_as = &address_space_memory;
 
     qdev_prop_set_uint32(DEVICE(&s->cpus), "num-harts", num_harts);
     qdev_prop_set_uint32(DEVICE(&s->cpus), "hartid-base", 0);
     qdev_prop_set_string(DEVICE(&s->cpus), "cpu-type",
-                         TYPE_RISCV_CPU_RVTNG_CALC_V0);
+                         TYPE_RISCV_CPU_DAYAN_CALC_V0);
     qdev_prop_set_uint64(DEVICE(&s->cpus), "resetvec",
-                         memmap[RVTNG_V0_ROM].base);
+                         memmap[DAYAN_V0_ROM].base);
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->cpus), errp)) {
         return;
     }
@@ -574,17 +574,17 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
     }
 
     /* Dayan CLINT IPI registers and software-interrupt outputs. */
-    if (!rvtng_clint_connect_harts(s, errp)) {
+    if (!dayan_clint_connect_harts(s, errp)) {
         return;
     }
     memory_region_init_io(&s->clint_ipi, OBJECT(dev),
-                          &rvtng_clint_ipi_ops, s, "rvtng.v0.clint.ipi",
+                          &dayan_clint_ipi_ops, s, "dayan.v0.clint.ipi",
                           DAYAN_CLINT_IPI_APERTURE_SIZE);
-    memory_region_add_subregion(system_memory, memmap[RVTNG_V0_CLINT].base,
+    memory_region_add_subregion(system_memory, memmap[DAYAN_V0_CLINT].base,
                                 &s->clint_ipi);
 
     /* The standard ACLINT timer backend matches Dayan's timer layout. */
-    riscv_aclint_mtimer_create(memmap[RVTNG_V0_CLINT].base +
+    riscv_aclint_mtimer_create(memmap[DAYAN_V0_CLINT].base +
                                DAYAN_CLINT_MTIMECMP_OFF,
                                DAYAN_CLINT_MTIMER_SIZE, 0, num_harts, 0,
                                DAYAN_CLINT_MTIME_OFF -
@@ -592,55 +592,55 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
                                DAYAN_CLINT_TIMEBASE_FREQ, true);
 
     /* ROM */
-    if (!memory_region_init_rom(&s->rom, OBJECT(dev), "rvtng.v0.rom",
-                                memmap[RVTNG_V0_ROM].size, errp)) {
+    if (!memory_region_init_rom(&s->rom, OBJECT(dev), "dayan.v0.rom",
+                                memmap[DAYAN_V0_ROM].size, errp)) {
         return;
     }
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_ROM].base, &s->rom);
+                                memmap[DAYAN_V0_ROM].base, &s->rom);
 
     /* MAILBOX */
     if (!memory_region_init_ram(&s->mailbox, OBJECT(dev),
-                                "rvtng.v0.mailbox",
-                                memmap[RVTNG_V0_MAILBOX].size, errp)) {
+                                "dayan.v0.mailbox",
+                                memmap[DAYAN_V0_MAILBOX].size, errp)) {
         return;
     }
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_MAILBOX].base, &s->mailbox);
+                                memmap[DAYAN_V0_MAILBOX].base, &s->mailbox);
 
     /* NPU-to-host interrupt-handler, also exposed through xdma0_user. */
-    memory_region_init_io(&s->intc, OBJECT(dev), &rvtng_intc_ops, s,
-                         "rvtng.v0.interrupt-handler",
-                         memmap[RVTNG_V0_INTERRUPT_HANDLER].size);
+    memory_region_init_io(&s->intc, OBJECT(dev), &dayan_intc_ops, s,
+                         "dayan.v0.interrupt-handler",
+                         memmap[DAYAN_V0_INTERRUPT_HANDLER].size);
     memory_region_add_subregion(
-        system_memory, memmap[RVTNG_V0_INTERRUPT_HANDLER].base, &s->intc);
+        system_memory, memmap[DAYAN_V0_INTERRUPT_HANDLER].base, &s->intc);
 
     /* Atomic-cache control page. Cache data behavior remains abstracted. */
     memory_region_init_io(&s->atomic_cache_control, OBJECT(dev),
-                          &rvtng_atomic_cache_control_ops, s,
-                          "rvtng.v0.atomic-cache-control",
-                          memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].size);
+                          &dayan_atomic_cache_control_ops, s,
+                          "dayan.v0.atomic-cache-control",
+                          memmap[DAYAN_V0_ATOMIC_CACHE_CONTROL].size);
     memory_region_add_subregion(
-        system_memory, memmap[RVTNG_V0_ATOMIC_CACHE_CONTROL].base,
+        system_memory, memmap[DAYAN_V0_ATOMIC_CACHE_CONTROL].base,
         &s->atomic_cache_control);
 
     /* Shared Resource table initialization, forwarded to the Dayan-emu. */
     memory_region_init_io(&s->resource_control, OBJECT(dev),
-                          &rvtng_resource_control_ops, s,
-                          "rvtng.v0.resource-control",
-                          memmap[RVTNG_V0_RESOURCE_CONTROL].size);
+                          &dayan_resource_control_ops, s,
+                          "dayan.v0.resource-control",
+                          memmap[DAYAN_V0_RESOURCE_CONTROL].size);
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_RESOURCE_CONTROL].base,
+                                memmap[DAYAN_V0_RESOURCE_CONTROL].base,
                                 &s->resource_control);
 
     /* Atomic-cache data window is currently modeled as fixed RAM. */
     if (!memory_region_init_ram(&s->atomic_cache, OBJECT(dev),
-                                "rvtng.v0.atomic-cache",
-                                memmap[RVTNG_V0_ATOMIC_CACHE].size, errp)) {
+                                "dayan.v0.atomic-cache",
+                                memmap[DAYAN_V0_ATOMIC_CACHE].size, errp)) {
         return;
     }
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_ATOMIC_CACHE].base,
+                                memmap[DAYAN_V0_ATOMIC_CACHE].base,
                                 &s->atomic_cache);
 
     for (unsigned core_idx = 0; core_idx < num_harts; core_idx++) {
@@ -650,30 +650,30 @@ static void rvtng_v0_soc_realize(DeviceState *dev, Error **errp)
 
         snprintf(shm_name, sizeof(shm_name), "/uram_shm_%u", core_idx);
         uram = frontend_get_shm_ptr(shm_name);
-        snprintf(region_name, sizeof(region_name), "rvtng.v0.uram_%u",
+        snprintf(region_name, sizeof(region_name), "dayan.v0.uram_%u",
                  core_idx);
         if (uram) {
             memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev),
                                        region_name,
-                                       memmap[RVTNG_V0_URAM].size, uram);
+                                       memmap[DAYAN_V0_URAM].size, uram);
         } else if (!memory_region_init_ram(&s->uram[core_idx], OBJECT(dev),
                                            region_name,
-                                           memmap[RVTNG_V0_URAM].size,
+                                           memmap[DAYAN_V0_URAM].size,
                                            errp)) {
             return;
         }
         memory_region_add_subregion(
             system_memory,
-            memmap[RVTNG_V0_URAM].base +
-            core_idx * RVTNG_V0_URAM_STRIDE,
+            memmap[DAYAN_V0_URAM].base +
+            core_idx * DAYAN_V0_URAM_STRIDE,
             &s->uram[core_idx]);
     }
 
-    rvtng_v0_soc_reset_hold(OBJECT(s), RESET_TYPE_COLD);
+    dayan_v0_soc_reset_hold(OBJECT(s), RESET_TYPE_COLD);
     qemu_register_resettable(OBJECT(dev));
 }
 
-static void rvtng_v0_soc_unrealize(DeviceState *dev)
+static void dayan_v0_soc_unrealize(DeviceState *dev)
 {
     qemu_unregister_resettable(OBJECT(dev));
 }
@@ -681,15 +681,15 @@ static void rvtng_v0_soc_unrealize(DeviceState *dev)
 int frontend_interrupt_update_service(int core_idx, int level)
 {
     MachineState *machine;
-    RVTNGV0State *s;
+    DayanV0State *s;
 
-    if (core_idx < 0 || core_idx >= RVTNG_MAX_CALC_CORES) {
+    if (core_idx < 0 || core_idx >= DAYAN_MAX_CALC_CORES) {
         return 0;
     }
 
     bql_lock();
     machine = MACHINE(qdev_get_machine());
-    s = RVTNG_V0_MACHINE(machine);
+    s = DAYAN_V0_MACHINE(machine);
     if (core_idx >= s->soc.cpus.num_harts) {
         bql_unlock();
         return 0;
@@ -699,49 +699,49 @@ int frontend_interrupt_update_service(int core_idx, int level)
     return 1;
 }
 
-static void rvtng_v0_soc_class_init(ObjectClass *klass, const void *data)
+static void dayan_v0_soc_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     ResettableClass *rc = RESETTABLE_CLASS(klass);
 
-    rc->phases.hold = rvtng_v0_soc_reset_hold;
-    dc->realize = rvtng_v0_soc_realize;
-    dc->unrealize = rvtng_v0_soc_unrealize;
+    rc->phases.hold = dayan_v0_soc_reset_hold;
+    dc->realize = dayan_v0_soc_realize;
+    dc->unrealize = dayan_v0_soc_unrealize;
     dc->user_creatable = false;
 }
 
-static void rvtng_v0_soc_instance_init(Object *obj)
+static void dayan_v0_soc_instance_init(Object *obj)
 {
-    RVTNGV0SoCState *s = RVTNG_V0_SOC(obj);
+    DayanV0SoCState *s = DAYAN_V0_SOC(obj);
 
     object_initialize_child(obj, "cpus", &s->cpus, TYPE_RISCV_HART_ARRAY);
-    object_initialize_child(obj, "mmu", &s->mmu, TYPE_RVTNG_MMU);
+    object_initialize_child(obj, "mmu", &s->mmu, TYPE_DAYAN_MMU);
 }
 
-static const TypeInfo rvtng_v0_soc_info = {
-    .name = TYPE_RVTNG_V0_SOC,
+static const TypeInfo dayan_v0_soc_info = {
+    .name = TYPE_DAYAN_V0_SOC,
     .parent = TYPE_DEVICE,
-    .instance_size = sizeof(RVTNGV0SoCState),
-    .instance_init = rvtng_v0_soc_instance_init,
-    .class_init = rvtng_v0_soc_class_init,
+    .instance_size = sizeof(DayanV0SoCState),
+    .instance_init = dayan_v0_soc_instance_init,
+    .class_init = dayan_v0_soc_class_init,
 };
 
-static void rvtng_v0_soc_register_types(void)
+static void dayan_v0_soc_register_types(void)
 {
-    type_register_static(&rvtng_v0_soc_info);
+    type_register_static(&dayan_v0_soc_info);
 }
-type_init(rvtng_v0_soc_register_types)
+type_init(dayan_v0_soc_register_types)
 
-static void rvtng_v0_machine_init(MachineState *machine)
+static void dayan_v0_machine_init(MachineState *machine)
 {
-    RVTNGV0State *s = RVTNG_V0_MACHINE(machine);
-    const MemMapEntry *memmap = rvtng_v0_memmap;
+    DayanV0State *s = DAYAN_V0_MACHINE(machine);
+    const MemMapEntry *memmap = dayan_v0_memmap;
     MemoryRegion *system_memory = get_system_memory();
     void *dram;
 
     /* Initialize SoC */
     object_initialize_child(OBJECT(machine), "soc", &s->soc,
-                            TYPE_RVTNG_V0_SOC);
+                            TYPE_DAYAN_V0_SOC);
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
     /* Shared DRAM */
@@ -750,10 +750,10 @@ static void rvtng_v0_machine_init(MachineState *machine)
         error_report("Unable to find shared dram pointer");
         exit(EXIT_FAILURE);
     }
-    memory_region_init_ram_ptr(&s->dram, OBJECT(machine), "rvtng.dram",
+    memory_region_init_ram_ptr(&s->dram, OBJECT(machine), "dayan.dram",
                                machine->ram_size, dram);
     memory_region_add_subregion(system_memory,
-                                memmap[RVTNG_V0_DRAM].base, &s->dram);
+                                memmap[DAYAN_V0_DRAM].base, &s->dram);
 
     /*
      * ClusterMMU (scalar ports 0..3).  Realized here rather than in the
@@ -763,20 +763,20 @@ static void rvtng_v0_machine_init(MachineState *machine)
     object_property_set_link(OBJECT(&s->soc.mmu), "dram-mr",
                              OBJECT(&s->dram), &error_fatal);
     qdev_prop_set_uint64(DEVICE(&s->soc.mmu), "dram-base",
-                         memmap[RVTNG_V0_DRAM].base);
+                         memmap[DAYAN_V0_DRAM].base);
     qdev_prop_set_uint64(DEVICE(&s->soc.mmu), "dram-size",
                          machine->ram_size);
     if (!sysbus_realize(SYS_BUS_DEVICE(&s->soc.mmu), &error_fatal)) {
         return;
     }
     sysbus_mmio_map(SYS_BUS_DEVICE(&s->soc.mmu), 0,
-                    memmap[RVTNG_V0_MMU].base);
+                    memmap[DAYAN_V0_MMU].base);
     for (unsigned i = 0; i < machine->smp.cpus; i++) {
         CPUState *cs = cpu_by_arch_id(i);
         RISCVCPU *cpu = cs ? RISCV_CPU(cs) : NULL;
 
         if (!cpu) {
-            error_report("rvtng-v0: ClusterMMU cannot find hart %u", i);
+            error_report("dayan-v0: ClusterMMU cannot find hart %u", i);
             return;
         }
         cpu->cluster_mmu = DEVICE(&s->soc.mmu);
@@ -784,7 +784,7 @@ static void rvtng_v0_machine_init(MachineState *machine)
     }
 
     if (machine->firmware) {
-        hwaddr firmware_entry = memmap[RVTNG_V0_ROM].base;
+        hwaddr firmware_entry = memmap[DAYAN_V0_ROM].base;
 
         riscv_find_and_load_firmware(machine, machine->firmware,
                                      &firmware_entry, NULL);
@@ -795,32 +795,32 @@ static void rvtng_v0_machine_init(MachineState *machine)
     }
 }
 
-static void rvtng_v0_machine_class_init(ObjectClass *klass, const void *data)
+static void dayan_v0_machine_class_init(ObjectClass *klass, const void *data)
 {
     MachineClass *mc = MACHINE_CLASS(klass);
     static const char *const valid_cpu_types[] = {
-        TYPE_RISCV_CPU_RVTNG_CALC_V0,
+        TYPE_RISCV_CPU_DAYAN_CALC_V0,
         NULL
     };
 
-    mc->desc = "RVTNG Accelerator FPGA prototype compatible " \
+    mc->desc = "Dayan Accelerator FPGA prototype compatible " \
                "QEMU Emulating Platform";
-    mc->init = rvtng_v0_machine_init;
-    mc->max_cpus = RVTNG_MAX_CALC_CORES;
-    mc->default_cpu_type = TYPE_RISCV_CPU_RVTNG_CALC_V0;
+    mc->init = dayan_v0_machine_init;
+    mc->max_cpus = DAYAN_MAX_CALC_CORES;
+    mc->default_cpu_type = TYPE_RISCV_CPU_DAYAN_CALC_V0;
     mc->valid_cpu_types = valid_cpu_types;
-    mc->default_ram_id = "rvtng.v0.ram";
+    mc->default_ram_id = "dayan.v0.ram";
 }
 
-static const TypeInfo rvtng_v0_machine_info = {
-    .name = TYPE_RVTNG_V0_MACHINE,
+static const TypeInfo dayan_v0_machine_info = {
+    .name = TYPE_DAYAN_V0_MACHINE,
     .parent = TYPE_MACHINE,
-    .instance_size = sizeof(RVTNGV0State),
-    .class_init = rvtng_v0_machine_class_init,
+    .instance_size = sizeof(DayanV0State),
+    .class_init = dayan_v0_machine_class_init,
 };
 
-static void rvtng_v0_machine_register_types(void)
+static void dayan_v0_machine_register_types(void)
 {
-    type_register_static(&rvtng_v0_machine_info);
+    type_register_static(&dayan_v0_machine_info);
 }
-type_init(rvtng_v0_machine_register_types)
+type_init(dayan_v0_machine_register_types)

@@ -1,19 +1,19 @@
 /*
- * RVTNG ClusterMMU functional model - pure C core
+ * Dayan ClusterMMU functional model - pure C core
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Single behavioral implementation of the ClusterMMU, shared by the
- * QEMU rvtng_mmu device, the Dayan-emu C++ shell (emu/mmu.cpp) and
+ * QEMU dayan_mmu device, the Dayan-emu C++ shell (emu/mmu.cpp) and
  * the golden-vector suites on both sides.  The RTL boundary behaviors
  * (FixMap 39-bit arithmetic, PDC non-G-restoring hits, ERROR_SLV_MASK
  * stored but unconsumed, negative entries only for PTW faults) are
- * modeled here.  Only addresses at/above RVTNG_MMU_DRAM_BASE (2 GiB)
+ * modeled here.  Only addresses at/above DAYAN_MMU_DRAM_BASE (2 GiB)
  * are translated; lower addresses pass through identity.  This file
  * must stay QEMU-header-free.
  */
 
-#include "hw/riscv/rvtng_mmu_core.h"
+#include "hw/riscv/dayan_mmu_core.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -32,7 +32,7 @@
 
 static uint64_t mask_pa(uint64_t value)
 {
-    return value & RVTNG_MMU_PA_MASK;
+    return value & DAYAN_MMU_PA_MASK;
 }
 
 static uint64_t vpn2_of(uint64_t vpn)
@@ -65,9 +65,9 @@ static uint64_t vpn_index(uint64_t vpn, unsigned level)
 static uint64_t page_size_bytes(uint8_t size)
 {
     switch (size) {
-    case RVTNG_MMU_PAGE_1G:
+    case DAYAN_MMU_PAGE_1G:
         return 1ull << 30;
-    case RVTNG_MMU_PAGE_2M:
+    case DAYAN_MMU_PAGE_2M:
         return 1ull << 21;
     default:
         return 1ull << 12;
@@ -81,16 +81,16 @@ static uint64_t page_low_mask(uint8_t size)
 
 static unsigned l1_entries(unsigned port)
 {
-    return port < RVTNG_MMU_SCALAR_PORTS ?
-           RVTNG_MMU_L1_ENTRIES_SCALAR : RVTNG_MMU_L1_ENTRIES_TENSOR;
+    return port < DAYAN_MMU_SCALAR_PORTS ?
+           DAYAN_MMU_L1_ENTRIES_SCALAR : DAYAN_MMU_L1_ENTRIES_TENSOR;
 }
 
-static bool page_match(const RvtngMmuTlbEntry *entry, uint64_t vpn)
+static bool page_match(const DayanMmuTlbEntry *entry, uint64_t vpn)
 {
     switch (entry->page_size) {
-    case RVTNG_MMU_PAGE_1G:
+    case DAYAN_MMU_PAGE_1G:
         return vpn2_of(entry->vpn) == vpn2_of(vpn);
-    case RVTNG_MMU_PAGE_2M:
+    case DAYAN_MMU_PAGE_2M:
         return vpn2_of(entry->vpn) == vpn2_of(vpn) &&
                vpn1_of(entry->vpn) == vpn1_of(vpn);
     default:
@@ -98,43 +98,43 @@ static bool page_match(const RvtngMmuTlbEntry *entry, uint64_t vpn)
     }
 }
 
-static bool permission_ok(const RvtngMmuTlbEntry *entry,
-                          RvtngMmuAccess access, RvtngMmuFault *fault)
+static bool permission_ok(const DayanMmuTlbEntry *entry,
+                          DayanMmuAccess access, DayanMmuFault *fault)
 {
     if (!entry->valid) {
         if (fault) {
-            *fault = RVTNG_MMU_FAULT_PTE_INVALID;
+            *fault = DAYAN_MMU_FAULT_PTE_INVALID;
         }
         return false;
     }
     switch (access) {
-    case RVTNG_MMU_READ:
+    case DAYAN_MMU_READ:
         if (!entry->r) {
             if (fault) {
-                *fault = RVTNG_MMU_FAULT_READ_PERM;
+                *fault = DAYAN_MMU_FAULT_READ_PERM;
             }
             return false;
         }
         break;
-    case RVTNG_MMU_WRITE:
+    case DAYAN_MMU_WRITE:
         if (!entry->w) {
             if (fault) {
-                *fault = RVTNG_MMU_FAULT_WRITE_PERM;
+                *fault = DAYAN_MMU_FAULT_WRITE_PERM;
             }
             return false;
         }
         break;
-    case RVTNG_MMU_EXECUTE:
+    case DAYAN_MMU_EXECUTE:
         if (!entry->x) {
             if (fault) {
-                *fault = RVTNG_MMU_FAULT_EXEC_PERM;
+                *fault = DAYAN_MMU_FAULT_EXEC_PERM;
             }
             return false;
         }
         break;
     }
     if (fault) {
-        *fault = RVTNG_MMU_FAULT_NONE;
+        *fault = DAYAN_MMU_FAULT_NONE;
     }
     return true;
 }
@@ -143,7 +143,7 @@ static bool permission_ok(const RvtngMmuTlbEntry *entry,
 /* Construction / reset                                                */
 /* ------------------------------------------------------------------ */
 
-void rvtng_mmu_core_init(RvtngMmuCore *c)
+void dayan_mmu_core_init(DayanMmuCore *c)
 {
     memset(c, 0, sizeof(*c));
     /* N_FIX_MAP_EN=0 with base 0 and size 0 gives the full-range
@@ -152,19 +152,19 @@ void rvtng_mmu_core_init(RvtngMmuCore *c)
     c->repl_lfsr = 1;
 }
 
-static void invalidate_all(RvtngMmuCore *c);
+static void invalidate_all(DayanMmuCore *c);
 
-void rvtng_mmu_core_bind_dram(RvtngMmuCore *c, const void *host,
+void dayan_mmu_core_bind_dram(DayanMmuCore *c, const void *host,
                               uint64_t base, uint64_t size)
 {
     c->dram_host = host;
-    c->dram_base = base & RVTNG_MMU_PA_MASK;
+    c->dram_base = base & DAYAN_MMU_PA_MASK;
     c->dram_size = size;
     /* The PTW transport changed; cached translations are stale. */
     invalidate_all(c);
 }
 
-void rvtng_mmu_core_set_reader(RvtngMmuCore *c, RvtngMmuPteReaderFn fn,
+void dayan_mmu_core_set_reader(DayanMmuCore *c, DayanMmuPteReaderFn fn,
                                void *opaque)
 {
     c->reader = fn;
@@ -172,10 +172,10 @@ void rvtng_mmu_core_set_reader(RvtngMmuCore *c, RvtngMmuPteReaderFn fn,
     invalidate_all(c);
 }
 
-RvtngMmuPteRead rvtng_mmu_core_dram_read(const RvtngMmuCore *c, uint64_t pa)
+DayanMmuPteRead dayan_mmu_core_dram_read(const DayanMmuCore *c, uint64_t pa)
 {
-    RvtngMmuPteRead result = { RVTNG_MMU_PTE_BUS_ERROR, 0 };
-    uint64_t address = pa & RVTNG_MMU_PA_MASK;
+    DayanMmuPteRead result = { DAYAN_MMU_PTE_BUS_ERROR, 0 };
+    uint64_t address = pa & DAYAN_MMU_PA_MASK;
     uint64_t offset;
 
     if (!c->dram_host || address < c->dram_base) {
@@ -187,23 +187,23 @@ RvtngMmuPteRead rvtng_mmu_core_dram_read(const RvtngMmuCore *c, uint64_t pa)
     }
     memcpy(&result.data, (const uint8_t *)c->dram_host + offset,
            sizeof(result.data));
-    result.response = RVTNG_MMU_PTE_OKAY;
+    result.response = DAYAN_MMU_PTE_OKAY;
     return result;
 }
 
-static RvtngMmuPteRead pte_read(const RvtngMmuCore *c, uint64_t pa)
+static DayanMmuPteRead pte_read(const DayanMmuCore *c, uint64_t pa)
 {
     if (c->reader) {
         return c->reader(c->reader_opaque, pa);
     }
-    return rvtng_mmu_core_dram_read(c, pa);
+    return dayan_mmu_core_dram_read(c, pa);
 }
 
 /* ------------------------------------------------------------------ */
 /* FixMap and redirect                                                 */
 /* ------------------------------------------------------------------ */
 
-static bool fixmap_hit(uint64_t va, const RvtngMmuCore *c)
+static bool fixmap_hit(uint64_t va, const DayanMmuCore *c)
 {
     uint64_t effective_va, page;
 
@@ -212,44 +212,44 @@ static bool fixmap_hit(uint64_t va, const RvtngMmuCore *c)
     }
     /* Hardware computes FixMap on the low 39 VA bits regardless of the
      * upper canonical bits (spec 15.1). */
-    effective_va = va & RVTNG_MMU_VA_MASK;
+    effective_va = va & DAYAN_MMU_VA_MASK;
     page = effective_va >> PAGE_BITS;
     return c->fixmap_size_pages == 0 || page < c->fixmap_size_pages;
 }
 
-static uint64_t fixmap_pa(uint64_t va, const RvtngMmuCore *c)
+static uint64_t fixmap_pa(uint64_t va, const DayanMmuCore *c)
 {
-    return mask_pa(c->fixmap_base + (va & RVTNG_MMU_VA_MASK));
+    return mask_pa(c->fixmap_base + (va & DAYAN_MMU_VA_MASK));
 }
 
-static uint64_t redirect_pa(uint64_t va, RvtngMmuFault fault,
-                            const RvtngMmuCore *c)
+static uint64_t redirect_pa(uint64_t va, DayanMmuFault fault,
+                            const DayanMmuCore *c)
 {
     uint64_t base = c->redir[5];   /* default_base */
 
     switch (fault) {
-    case RVTNG_MMU_FAULT_PTE_INVALID:
-    case RVTNG_MMU_FAULT_ILLEGAL_PTE:
+    case DAYAN_MMU_FAULT_PTE_INVALID:
+    case DAYAN_MMU_FAULT_ILLEGAL_PTE:
         base = c->redir[0];        /* page_fault */
         break;
-    case RVTNG_MMU_FAULT_READ_PERM:
+    case DAYAN_MMU_FAULT_READ_PERM:
         base = c->redir[1];
         break;
-    case RVTNG_MMU_FAULT_WRITE_PERM:
+    case DAYAN_MMU_FAULT_WRITE_PERM:
         base = c->redir[2];
         break;
-    case RVTNG_MMU_FAULT_EXEC_PERM:
+    case DAYAN_MMU_FAULT_EXEC_PERM:
         base = c->redir[3];
         break;
-    case RVTNG_MMU_FAULT_PTW_BUS_ERROR:
-    case RVTNG_MMU_FAULT_PTW_TIMEOUT:
+    case DAYAN_MMU_FAULT_PTW_BUS_ERROR:
+    case DAYAN_MMU_FAULT_PTW_TIMEOUT:
         base = c->redir[4];        /* ptw_error */
         break;
     default:
         break;
     }
     if (c->redir_offset_enable) {
-        base += va & RVTNG_MMU_PAGE_MASK;
+        base += va & DAYAN_MMU_PAGE_MASK;
     }
     return mask_pa(base);
 }
@@ -258,14 +258,14 @@ static uint64_t redirect_pa(uint64_t va, RvtngMmuFault fault,
 /* L1 / L2 / PDC                                                       */
 /* ------------------------------------------------------------------ */
 
-static RvtngMmuTlbEntry *l1_lookup(RvtngMmuCore *c, unsigned port,
+static DayanMmuTlbEntry *l1_lookup(DayanMmuCore *c, unsigned port,
                                    uint64_t vpn, uint8_t asid)
 {
     unsigned count = l1_entries(port);
     unsigned i;
 
     for (i = 0; i < count; i++) {
-        RvtngMmuTlbEntry *entry = &c->l1[port][i];
+        DayanMmuTlbEntry *entry = &c->l1[port][i];
 
         if (entry->valid && page_match(entry, vpn) &&
             (entry->global || entry->asid == asid)) {
@@ -275,8 +275,8 @@ static RvtngMmuTlbEntry *l1_lookup(RvtngMmuCore *c, unsigned port,
     return NULL;
 }
 
-static void l1_insert(RvtngMmuCore *c, unsigned port,
-                      const RvtngMmuTlbEntry *entry)
+static void l1_insert(DayanMmuCore *c, unsigned port,
+                      const DayanMmuTlbEntry *entry)
 {
     unsigned count = l1_entries(port);
     unsigned victim = count;
@@ -286,7 +286,7 @@ static void l1_insert(RvtngMmuCore *c, unsigned port,
         return;
     }
     for (i = 0; i < count; i++) {
-        RvtngMmuTlbEntry *old = &c->l1[port][i];
+        DayanMmuTlbEntry *old = &c->l1[port][i];
 
         if (old->valid && old->vpn == entry->vpn &&
             (old->global || old->asid == entry->asid)) {
@@ -311,7 +311,7 @@ static void l1_insert(RvtngMmuCore *c, unsigned port,
     }
 }
 
-static RvtngMmuTlbEntry *l2_bank_lookup(RvtngMmuTlbEntry *entries,
+static DayanMmuTlbEntry *l2_bank_lookup(DayanMmuTlbEntry *entries,
                                         unsigned sets, unsigned ways,
                                         unsigned set, uint64_t vpn,
                                         uint8_t asid)
@@ -319,7 +319,7 @@ static RvtngMmuTlbEntry *l2_bank_lookup(RvtngMmuTlbEntry *entries,
     unsigned way;
 
     for (way = 0; way < ways; way++) {
-        RvtngMmuTlbEntry *entry = &entries[set * ways + way];
+        DayanMmuTlbEntry *entry = &entries[set * ways + way];
 
         if (entry->valid && page_match(entry, vpn) &&
             (entry->global || entry->asid == asid)) {
@@ -330,10 +330,10 @@ static RvtngMmuTlbEntry *l2_bank_lookup(RvtngMmuTlbEntry *entries,
 }
 
 /* Overlapping hits resolve 4K > 2M > 1G (bank order below). */
-static RvtngMmuTlbEntry *l2_lookup(RvtngMmuCore *c, uint64_t vpn,
+static DayanMmuTlbEntry *l2_lookup(DayanMmuCore *c, uint64_t vpn,
                                    uint8_t asid)
 {
-    RvtngMmuTlbEntry *entry;
+    DayanMmuTlbEntry *entry;
 
     entry = l2_bank_lookup(c->l2_4k, L2_4K_SETS, L2_4K_WAYS,
                            (unsigned)(vpn & 0x7f), vpn, asid);
@@ -349,7 +349,7 @@ static RvtngMmuTlbEntry *l2_lookup(RvtngMmuCore *c, uint64_t vpn,
                           (unsigned)((vpn >> 18) & 0x7f), vpn, asid);
 }
 
-static void advance_repl_lfsr(RvtngMmuCore *c)
+static void advance_repl_lfsr(DayanMmuCore *c)
 {
     c->repl_lfsr = (uint8_t)((c->repl_lfsr << 1) ^
         (((c->repl_lfsr >> 7) ^ (c->repl_lfsr >> 5) ^
@@ -359,21 +359,21 @@ static void advance_repl_lfsr(RvtngMmuCore *c)
     }
 }
 
-static void l2_insert(RvtngMmuCore *c, const RvtngMmuTlbEntry *entry)
+static void l2_insert(DayanMmuCore *c, const DayanMmuTlbEntry *entry)
 {
-    RvtngMmuTlbEntry *entries;
+    DayanMmuTlbEntry *entries;
     unsigned ways, set, victim, way;
 
     if (!entry->valid) {
         return;
     }
     switch (entry->page_size) {
-    case RVTNG_MMU_PAGE_2M:
+    case DAYAN_MMU_PAGE_2M:
         entries = c->l2_2m;
         ways = L2_2M_WAYS;
         set = (unsigned)((entry->vpn >> 9) & 0xff);
         break;
-    case RVTNG_MMU_PAGE_1G:
+    case DAYAN_MMU_PAGE_1G:
         entries = c->l2_1g;
         ways = L2_1G_WAYS;
         set = (unsigned)((entry->vpn >> 18) & 0x7f);
@@ -398,14 +398,14 @@ static void l2_insert(RvtngMmuCore *c, const RvtngMmuTlbEntry *entry)
     advance_repl_lfsr(c);
 }
 
-static bool pdc_lookup(const RvtngMmuPdcEntry *entries, unsigned count,
+static bool pdc_lookup(const DayanMmuPdcEntry *entries, unsigned count,
                        uint16_t v2, uint16_t v1, bool match_v1,
                        uint8_t asid, bool *global, uint64_t *ppn)
 {
     unsigned i;
 
     for (i = 0; i < count; i++) {
-        const RvtngMmuPdcEntry *entry = &entries[i];
+        const DayanMmuPdcEntry *entry = &entries[i];
 
         if (entry->valid && entry->vpn2 == v2 &&
             (!match_v1 || entry->vpn1 == v1) &&
@@ -421,10 +421,10 @@ static bool pdc_lookup(const RvtngMmuPdcEntry *entries, unsigned count,
 /* RTL boundary (spec 15.2): a PDC hit restores only the skipped
  * non-leaf's PPN; its G bit is not re-derived from the entry, so the
  * cached_global used for insertion below is the node's own G bit. */
-static void pdc_insert(RvtngMmuPdcEntry *entries, unsigned count,
+static void pdc_insert(DayanMmuPdcEntry *entries, unsigned count,
                        uint16_t v2, uint16_t v1,
                        uint8_t asid, bool global, uint64_t ppn,
-                       RvtngMmuCore *c)
+                       DayanMmuCore *c)
 {
     unsigned victim = count;
     unsigned i;
@@ -452,7 +452,7 @@ static void pdc_insert(RvtngMmuPdcEntry *entries, unsigned count,
 /* ------------------------------------------------------------------ */
 
 struct walk_result {
-    RvtngMmuFault fault;           /* NONE means leaf found            */
+    DayanMmuFault fault;           /* NONE means leaf found            */
     uint8_t page_size;
     bool global_mapping;
     uint64_t pa;
@@ -463,7 +463,7 @@ struct walk_result {
 
 /* @cfg supplies the config image for this access (ptw_base, ASID);
  * the PDC arrays and PTW transport are always the live @c state. */
-static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
+static struct walk_result walk(DayanMmuCore *c, const DayanMmuCore *cfg,
                                uint64_t va, uint64_t vpn)
 {
     struct walk_result result;
@@ -475,7 +475,7 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
     unsigned level = 0;
 
     memset(&result, 0, sizeof(result));
-    result.fault = RVTNG_MMU_FAULT_ILLEGAL_PTE;
+    result.fault = DAYAN_MMU_FAULT_ILLEGAL_PTE;
 
     while (level < 3) {
         bool pdc_global = false;
@@ -498,7 +498,7 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
 
         uint64_t pte_pa = mask_pa((current_ppn << PAGE_BITS) +
                                   (vpn_index(vpn, level) << 3));
-        RvtngMmuPteRead read = pte_read(c, pte_pa);
+        DayanMmuPteRead read = pte_read(c, pte_pa);
         uint64_t pte = read.data;
         bool valid, readable, writable, executable, global;
         uint64_t ppn;
@@ -507,12 +507,12 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
          * overflow. */
         result.walk_addresses[result.walk_depth++] = pte_pa;
 
-        if (read.response == RVTNG_MMU_PTE_TIMEOUT) {
-            result.fault = RVTNG_MMU_FAULT_PTW_TIMEOUT;
+        if (read.response == DAYAN_MMU_PTE_TIMEOUT) {
+            result.fault = DAYAN_MMU_FAULT_PTW_TIMEOUT;
             return result;
         }
-        if (read.response == RVTNG_MMU_PTE_BUS_ERROR) {
-            result.fault = RVTNG_MMU_FAULT_PTW_BUS_ERROR;
+        if (read.response == DAYAN_MMU_PTE_BUS_ERROR) {
+            result.fault = DAYAN_MMU_FAULT_PTW_BUS_ERROR;
             result.pte_snapshot = read.data;
             return result;
         }
@@ -525,26 +525,26 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
         ppn = (pte >> 10) & PPN_MASK;
 
         if (!valid) {
-            result.fault = RVTNG_MMU_FAULT_PTE_INVALID;
+            result.fault = DAYAN_MMU_FAULT_PTE_INVALID;
             result.pte_snapshot = pte;
             return result;
         }
         if (writable && !readable) {
-            result.fault = RVTNG_MMU_FAULT_ILLEGAL_PTE;
+            result.fault = DAYAN_MMU_FAULT_ILLEGAL_PTE;
             result.pte_snapshot = pte;
             return result;
         }
         if (readable || executable) {
             if ((level == 0 && (ppn & ((1ull << 18) - 1))) ||
                 (level == 1 && (ppn & ((1ull << 9) - 1)))) {
-                result.fault = RVTNG_MMU_FAULT_ILLEGAL_PTE;
+                result.fault = DAYAN_MMU_FAULT_ILLEGAL_PTE;
                 result.pte_snapshot = pte;
                 return result;
             }
-            result.fault = RVTNG_MMU_FAULT_NONE;
-            result.page_size = level == 0 ? RVTNG_MMU_PAGE_1G :
-                               level == 1 ? RVTNG_MMU_PAGE_2M :
-                                            RVTNG_MMU_PAGE_4K;
+            result.fault = DAYAN_MMU_FAULT_NONE;
+            result.page_size = level == 0 ? DAYAN_MMU_PAGE_1G :
+                               level == 1 ? DAYAN_MMU_PAGE_2M :
+                                            DAYAN_MMU_PAGE_4K;
             result.global_mapping = accumulated_global || global;
             result.pte_snapshot = pte;
             {
@@ -556,7 +556,7 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
             return result;
         }
         if (level == 2) {
-            result.fault = RVTNG_MMU_FAULT_ILLEGAL_PTE;
+            result.fault = DAYAN_MMU_FAULT_ILLEGAL_PTE;
             result.pte_snapshot = pte;
             return result;
         }
@@ -573,7 +573,7 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
         level++;
     }
 
-    result.fault = RVTNG_MMU_FAULT_ILLEGAL_PTE;
+    result.fault = DAYAN_MMU_FAULT_ILLEGAL_PTE;
     return result;
 }
 
@@ -581,22 +581,22 @@ static struct walk_result walk(RvtngMmuCore *c, const RvtngMmuCore *cfg,
 /* Translate                                                           */
 /* ------------------------------------------------------------------ */
 
-uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
-                                       const RvtngMmuCore *cfg_in,
-                                       uint64_t va, RvtngMmuAccess acc,
+uint64_t dayan_mmu_core_translate_full(DayanMmuCore *c,
+                                       const DayanMmuCore *cfg_in,
+                                       uint64_t va, DayanMmuAccess acc,
                                        unsigned port,
-                                       RvtngMmuFault *fault_out,
-                                       RvtngMmuPageSize *page_size_out,
-                                       RvtngMmuTranslateDetail *detail_out)
+                                       DayanMmuFault *fault_out,
+                                       DayanMmuPageSize *page_size_out,
+                                       DayanMmuTranslateDetail *detail_out)
 {
-    RvtngMmuCore snapshot;
-    RvtngMmuCore *cfg = &snapshot;
-    RvtngMmuFault fault = RVTNG_MMU_FAULT_NONE;
-    RvtngMmuPageSize size = RVTNG_MMU_PAGE_4K;
-    RvtngMmuTranslateDetail detail;
+    DayanMmuCore snapshot;
+    DayanMmuCore *cfg = &snapshot;
+    DayanMmuFault fault = DAYAN_MMU_FAULT_NONE;
+    DayanMmuPageSize size = DAYAN_MMU_PAGE_4K;
+    DayanMmuTranslateDetail detail;
     uint64_t pa = 0;
     uint64_t vpn;
-    RvtngMmuTlbEntry *entry;
+    DayanMmuTlbEntry *entry;
     unsigned i;
 
     memset(&detail, 0, sizeof(detail));
@@ -607,7 +607,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
      * substitution semantics. */
     #define MMU_RETURN()                              \
         do {                                          \
-            if (fault != RVTNG_MMU_FAULT_NONE) {      \
+            if (fault != DAYAN_MMU_FAULT_NONE) {      \
                 c->stat_fault[fault & 15]++;          \
                 c->stat_redirect++;                   \
             }                                         \
@@ -620,7 +620,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
             if (detail_out) {                         \
                 *detail_out = detail;                 \
             }                                         \
-            if (fault != RVTNG_MMU_FAULT_NONE) {      \
+            if (fault != DAYAN_MMU_FAULT_NONE) {      \
                 return redirect_pa(va, fault, cfg);   \
             }                                         \
             return pa;                                \
@@ -631,7 +631,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
      * the URAM aperture, all control space and the MMU's own APB
      * page -- is routed around the translation engine and passes
      * through identity regardless of FixMap or page-table state. */
-    if (va < RVTNG_MMU_DRAM_BASE) {
+    if (va < DAYAN_MMU_DRAM_BASE) {
         pa = va;
         MMU_RETURN();
     }
@@ -644,7 +644,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
     } else {
         memcpy(&snapshot, c, sizeof(snapshot));
     }
-    if (port >= RVTNG_MMU_NUM_PORTS) {
+    if (port >= DAYAN_MMU_NUM_PORTS) {
         port = 0;
     }
     snapshot.ptw_base = mask_pa(snapshot.ptw_base);
@@ -659,7 +659,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
 
     if (fixmap_hit(va, cfg)) {
         pa = fixmap_pa(va, cfg);
-        size = RVTNG_MMU_PAGE_4K;
+        size = DAYAN_MMU_PAGE_4K;
         MMU_RETURN();
     }
 
@@ -670,7 +670,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
         } else {
             permission_ok(entry, acc, &fault);
         }
-        if (fault != RVTNG_MMU_FAULT_NONE) {
+        if (fault != DAYAN_MMU_FAULT_NONE) {
             detail.redirected = true;
             MMU_RETURN();
         }
@@ -684,7 +684,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
 
     entry = l2_lookup(c, vpn, cfg->global_asid);
     if (entry) {
-        RvtngMmuTlbEntry cached = *entry;
+        DayanMmuTlbEntry cached = *entry;
 
         if (cached.negative) {
             /* Negative hits report the cached fault directly; they are
@@ -695,7 +695,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
         }
         l1_insert(c, port, &cached);
         permission_ok(&cached, acc, &fault);
-        if (fault != RVTNG_MMU_FAULT_NONE) {
+        if (fault != DAYAN_MMU_FAULT_NONE) {
             detail.redirected = true;
             MMU_RETURN();
         }
@@ -716,10 +716,10 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
         detail.walk_depth = walked.walk_depth;
         detail.pte_snapshot = walked.pte_snapshot;
 
-        if (walked.fault != RVTNG_MMU_FAULT_NONE) {
+        if (walked.fault != DAYAN_MMU_FAULT_NONE) {
             /* Walk faults (and only they) enter the L2 negative cache;
              * permission checks happen after a successful fill. */
-            RvtngMmuTlbEntry negative;
+            DayanMmuTlbEntry negative;
 
             memset(&negative, 0, sizeof(negative));
             negative.valid = true;
@@ -727,7 +727,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
             negative.fault = walked.fault;
             negative.vpn = vpn;
             negative.asid = cfg->global_asid;
-            negative.page_size = RVTNG_MMU_PAGE_4K;
+            negative.page_size = DAYAN_MMU_PAGE_4K;
             l2_insert(c, &negative);
 
             fault = walked.fault;
@@ -736,7 +736,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
         }
 
         {
-            RvtngMmuTlbEntry filled;
+            DayanMmuTlbEntry filled;
 
             memset(&filled, 0, sizeof(filled));
             filled.valid = true;
@@ -756,7 +756,7 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
             l1_insert(c, port, &filled);
 
             permission_ok(&filled, acc, &fault);
-            if (fault != RVTNG_MMU_FAULT_NONE) {
+            if (fault != DAYAN_MMU_FAULT_NONE) {
                 detail.redirected = true;
                 MMU_RETURN();
             }
@@ -772,12 +772,12 @@ uint64_t rvtng_mmu_core_translate_full(RvtngMmuCore *c,
     #undef MMU_RETURN
 }
 
-uint64_t rvtng_mmu_core_translate(RvtngMmuCore *c, uint64_t va,
-                                  RvtngMmuAccess acc, unsigned port,
-                                  RvtngMmuFault *fault_out,
-                                  RvtngMmuPageSize *page_size_out)
+uint64_t dayan_mmu_core_translate(DayanMmuCore *c, uint64_t va,
+                                  DayanMmuAccess acc, unsigned port,
+                                  DayanMmuFault *fault_out,
+                                  DayanMmuPageSize *page_size_out)
 {
-    return rvtng_mmu_core_translate_full(c, NULL, va, acc, port,
+    return dayan_mmu_core_translate_full(c, NULL, va, acc, port,
                                          fault_out, page_size_out, NULL);
 }
 
@@ -785,7 +785,7 @@ uint64_t rvtng_mmu_core_translate(RvtngMmuCore *c, uint64_t va,
 /* Flush                                                               */
 /* ------------------------------------------------------------------ */
 
-static void invalidate_all(RvtngMmuCore *c)
+static void invalidate_all(DayanMmuCore *c)
 {
     memset(c->l1, 0, sizeof(c->l1));
     memset(c->l2_4k, 0, sizeof(c->l2_4k));
@@ -795,13 +795,13 @@ static void invalidate_all(RvtngMmuCore *c)
     memset(c->pdc_l1, 0, sizeof(c->pdc_l1));
 }
 
-static void invalidate_asid(RvtngMmuCore *c, uint8_t asid)
+static void invalidate_asid(DayanMmuCore *c, uint8_t asid)
 {
     unsigned port, i;
 
-    for (port = 0; port < RVTNG_MMU_NUM_PORTS; port++) {
+    for (port = 0; port < DAYAN_MMU_NUM_PORTS; port++) {
         for (i = 0; i < l1_entries(port); i++) {
-            RvtngMmuTlbEntry *entry = &c->l1[port][i];
+            DayanMmuTlbEntry *entry = &c->l1[port][i];
 
             if (entry->valid && !entry->global && entry->asid == asid) {
                 entry->valid = false;
@@ -809,21 +809,21 @@ static void invalidate_asid(RvtngMmuCore *c, uint8_t asid)
         }
     }
     for (i = 0; i < L2_4K_SETS * L2_4K_WAYS; i++) {
-        RvtngMmuTlbEntry *entry = &c->l2_4k[i];
+        DayanMmuTlbEntry *entry = &c->l2_4k[i];
 
         if (entry->valid && !entry->global && entry->asid == asid) {
             entry->valid = false;
         }
     }
     for (i = 0; i < L2_2M_SETS * L2_2M_WAYS; i++) {
-        RvtngMmuTlbEntry *entry = &c->l2_2m[i];
+        DayanMmuTlbEntry *entry = &c->l2_2m[i];
 
         if (entry->valid && !entry->global && entry->asid == asid) {
             entry->valid = false;
         }
     }
     for (i = 0; i < L2_1G_SETS * L2_1G_WAYS; i++) {
-        RvtngMmuTlbEntry *entry = &c->l2_1g[i];
+        DayanMmuTlbEntry *entry = &c->l2_1g[i];
 
         if (entry->valid && !entry->global && entry->asid == asid) {
             entry->valid = false;
@@ -841,7 +841,7 @@ static void invalidate_asid(RvtngMmuCore *c, uint8_t asid)
     }
 }
 
-void rvtng_mmu_core_flush(RvtngMmuCore *c, bool asid_sel, uint8_t asid)
+void dayan_mmu_core_flush(DayanMmuCore *c, bool asid_sel, uint8_t asid)
 {
     /* The synchronous model never reports busy; keep the reject path
      * for parity with the Dayan-emu. */
@@ -860,7 +860,7 @@ void rvtng_mmu_core_flush(RvtngMmuCore *c, bool asid_sel, uint8_t asid)
     c->flush_error_code = 0;
 }
 
-void rvtng_mmu_core_ack_flush(RvtngMmuCore *c)
+void dayan_mmu_core_ack_flush(DayanMmuCore *c)
 {
     c->flush_done = false;
 }
@@ -884,7 +884,7 @@ static void set_high(uint64_t *field, uint32_t data)
     *field = (*field & 0xffffffffull) | ((uint64_t)(data & 0x00ffffff) << 32);
 }
 
-static void reapply_masks(RvtngMmuCore *c)
+static void reapply_masks(DayanMmuCore *c)
 {
     c->ptw_base = mask_pa(c->ptw_base);
     c->fixmap_base = mask_pa(c->fixmap_base);
@@ -898,64 +898,64 @@ static void reapply_masks(RvtngMmuCore *c)
     c->error_slv_mask = mask_pa(c->error_slv_mask);
 }
 
-RvtngMmuFwdClass rvtng_mmu_core_classify_write(uint16_t off)
+DayanMmuFwdClass dayan_mmu_core_classify_write(uint16_t off)
 {
     switch (off) {
-    case RVTNG_MMU_REG_TLB_FLUSH:
-        return RVTNG_MMU_FWD_FLUSH;
-    case RVTNG_MMU_REG_PTW_BASE_LO:
-    case RVTNG_MMU_REG_PTW_BASE_HI:
-    case RVTNG_MMU_REG_FIX_MAP_BASE_LO:
-    case RVTNG_MMU_REG_FIX_MAP_BASE_HI:
-    case RVTNG_MMU_REG_N_FIX_MAP_EN:
-    case RVTNG_MMU_REG_GLOBAL_ASID:
-    case RVTNG_MMU_REG_ERROR_SLV_MASK_LO:
-    case RVTNG_MMU_REG_ERROR_SLV_MASK_HI:
-    case RVTNG_MMU_REG_ERROR_SLV_OFF_MODE:
-    case RVTNG_MMU_REG_REDIR_PAGE_FAULT_LO:
-    case RVTNG_MMU_REG_REDIR_PAGE_FAULT_HI:
-    case RVTNG_MMU_REG_REDIR_READ_PERM_LO:
-    case RVTNG_MMU_REG_REDIR_READ_PERM_HI:
-    case RVTNG_MMU_REG_REDIR_WRITE_PERM_LO:
-    case RVTNG_MMU_REG_REDIR_WRITE_PERM_HI:
-    case RVTNG_MMU_REG_REDIR_EXEC_PERM_LO:
-    case RVTNG_MMU_REG_REDIR_EXEC_PERM_HI:
-    case RVTNG_MMU_REG_REDIR_PTW_ERR_LO:
-    case RVTNG_MMU_REG_REDIR_PTW_ERR_HI:
-    case RVTNG_MMU_REG_REDIR_DEFAULT_LO:
-    case RVTNG_MMU_REG_REDIR_DEFAULT_HI:
-    case RVTNG_MMU_REG_FIX_MAP_SIZE_LO:
-    case RVTNG_MMU_REG_FIX_MAP_SIZE_HI:
-        return RVTNG_MMU_FWD_REG_WRITE;
+    case DAYAN_MMU_REG_TLB_FLUSH:
+        return DAYAN_MMU_FWD_FLUSH;
+    case DAYAN_MMU_REG_PTW_BASE_LO:
+    case DAYAN_MMU_REG_PTW_BASE_HI:
+    case DAYAN_MMU_REG_FIX_MAP_BASE_LO:
+    case DAYAN_MMU_REG_FIX_MAP_BASE_HI:
+    case DAYAN_MMU_REG_N_FIX_MAP_EN:
+    case DAYAN_MMU_REG_GLOBAL_ASID:
+    case DAYAN_MMU_REG_ERROR_SLV_MASK_LO:
+    case DAYAN_MMU_REG_ERROR_SLV_MASK_HI:
+    case DAYAN_MMU_REG_ERROR_SLV_OFF_MODE:
+    case DAYAN_MMU_REG_REDIR_PAGE_FAULT_LO:
+    case DAYAN_MMU_REG_REDIR_PAGE_FAULT_HI:
+    case DAYAN_MMU_REG_REDIR_READ_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_READ_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_WRITE_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_WRITE_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_EXEC_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_EXEC_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_PTW_ERR_LO:
+    case DAYAN_MMU_REG_REDIR_PTW_ERR_HI:
+    case DAYAN_MMU_REG_REDIR_DEFAULT_LO:
+    case DAYAN_MMU_REG_REDIR_DEFAULT_HI:
+    case DAYAN_MMU_REG_FIX_MAP_SIZE_LO:
+    case DAYAN_MMU_REG_FIX_MAP_SIZE_HI:
+        return DAYAN_MMU_FWD_REG_WRITE;
     default:
         /* FLUSH_ACK / ERROR_SLV_CFG_CLR / read-only / undefined. */
-        return RVTNG_MMU_FWD_NONE;
+        return DAYAN_MMU_FWD_NONE;
     }
 }
 
-bool rvtng_mmu_core_write_reg(RvtngMmuCore *c, uint16_t off, uint32_t val)
+bool dayan_mmu_core_write_reg(DayanMmuCore *c, uint16_t off, uint32_t val)
 {
     switch (off) {
-    case RVTNG_MMU_REG_PTW_BASE_LO:
+    case DAYAN_MMU_REG_PTW_BASE_LO:
         set_low(&c->ptw_base, val);
         break;
-    case RVTNG_MMU_REG_PTW_BASE_HI:
+    case DAYAN_MMU_REG_PTW_BASE_HI:
         set_high(&c->ptw_base, val);
         break;
-    case RVTNG_MMU_REG_FIX_MAP_BASE_LO:
+    case DAYAN_MMU_REG_FIX_MAP_BASE_LO:
         /* Low halves bound to FixMap/redirect windows must be 4K
          * aligned; violations are silently ignored (RTL parity). */
         if ((val & 0xfff) == 0) {
             set_low(&c->fixmap_base, val);
         }
         break;
-    case RVTNG_MMU_REG_FIX_MAP_BASE_HI:
+    case DAYAN_MMU_REG_FIX_MAP_BASE_HI:
         set_high(&c->fixmap_base, val);
         break;
-    case RVTNG_MMU_REG_N_FIX_MAP_EN:
+    case DAYAN_MMU_REG_N_FIX_MAP_EN:
         c->n_fixmap_en = (val & 1) != 0;
         break;
-    case RVTNG_MMU_REG_TLB_FLUSH:
+    case DAYAN_MMU_REG_TLB_FLUSH:
         if (val & 1) {
             if (c->flush_busy) {
                 c->flush_error_code = 1;
@@ -972,82 +972,82 @@ bool rvtng_mmu_core_write_reg(RvtngMmuCore *c, uint16_t off, uint32_t val)
             }
         }
         break;
-    case RVTNG_MMU_REG_FLUSH_ACK:
+    case DAYAN_MMU_REG_FLUSH_ACK:
         if (val & 1) {
             c->flush_done = false;
         }
         break;
-    case RVTNG_MMU_REG_GLOBAL_ASID:
+    case DAYAN_MMU_REG_GLOBAL_ASID:
         c->global_asid = (uint8_t)(val & 0xff);
         break;
-    case RVTNG_MMU_REG_ERROR_SLV_MASK_LO:
+    case DAYAN_MMU_REG_ERROR_SLV_MASK_LO:
         /* Stored for architectural completeness; not consumed by the
          * data path (spec 15.3). */
         if ((val & 0xfff) == 0) {
             set_low(&c->error_slv_mask, val);
         }
         break;
-    case RVTNG_MMU_REG_ERROR_SLV_MASK_HI:
+    case DAYAN_MMU_REG_ERROR_SLV_MASK_HI:
         set_high(&c->error_slv_mask, val);
         break;
-    case RVTNG_MMU_REG_ERROR_SLV_OFF_MODE:
+    case DAYAN_MMU_REG_ERROR_SLV_OFF_MODE:
         c->redir_offset_enable = (val & 1) != 0;
         break;
-    case RVTNG_MMU_REG_ERROR_SLV_CFG_CLR:
+    case DAYAN_MMU_REG_ERROR_SLV_CFG_CLR:
         /* Standalone ERROR_SLV_CFG_ERR input is tied low. */
         break;
-    case RVTNG_MMU_REG_REDIR_PAGE_FAULT_LO:
+    case DAYAN_MMU_REG_REDIR_PAGE_FAULT_LO:
         if ((val & 0xfff) == 0) {
             set_low(&c->redir[0], val);
         }
         break;
-    case RVTNG_MMU_REG_REDIR_PAGE_FAULT_HI:
+    case DAYAN_MMU_REG_REDIR_PAGE_FAULT_HI:
         set_high(&c->redir[0], val);
         break;
-    case RVTNG_MMU_REG_REDIR_READ_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_READ_PERM_LO:
         if ((val & 0xfff) == 0) {
             set_low(&c->redir[1], val);
         }
         break;
-    case RVTNG_MMU_REG_REDIR_READ_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_READ_PERM_HI:
         set_high(&c->redir[1], val);
         break;
-    case RVTNG_MMU_REG_REDIR_WRITE_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_WRITE_PERM_LO:
         if ((val & 0xfff) == 0) {
             set_low(&c->redir[2], val);
         }
         break;
-    case RVTNG_MMU_REG_REDIR_WRITE_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_WRITE_PERM_HI:
         set_high(&c->redir[2], val);
         break;
-    case RVTNG_MMU_REG_REDIR_EXEC_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_EXEC_PERM_LO:
         if ((val & 0xfff) == 0) {
             set_low(&c->redir[3], val);
         }
         break;
-    case RVTNG_MMU_REG_REDIR_EXEC_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_EXEC_PERM_HI:
         set_high(&c->redir[3], val);
         break;
-    case RVTNG_MMU_REG_REDIR_PTW_ERR_LO:
+    case DAYAN_MMU_REG_REDIR_PTW_ERR_LO:
         if ((val & 0xfff) == 0) {
             set_low(&c->redir[4], val);
         }
         break;
-    case RVTNG_MMU_REG_REDIR_PTW_ERR_HI:
+    case DAYAN_MMU_REG_REDIR_PTW_ERR_HI:
         set_high(&c->redir[4], val);
         break;
-    case RVTNG_MMU_REG_REDIR_DEFAULT_LO:
+    case DAYAN_MMU_REG_REDIR_DEFAULT_LO:
         if ((val & 0xfff) == 0) {
             set_low(&c->redir[5], val);
         }
         break;
-    case RVTNG_MMU_REG_REDIR_DEFAULT_HI:
+    case DAYAN_MMU_REG_REDIR_DEFAULT_HI:
         set_high(&c->redir[5], val);
         break;
-    case RVTNG_MMU_REG_FIX_MAP_SIZE_LO:
+    case DAYAN_MMU_REG_FIX_MAP_SIZE_LO:
         set_low(&c->fixmap_size_pages, val);
         break;
-    case RVTNG_MMU_REG_FIX_MAP_SIZE_HI:
+    case DAYAN_MMU_REG_FIX_MAP_SIZE_HI:
         set_high(&c->fixmap_size_pages, val);
         break;
     default:
@@ -1058,62 +1058,62 @@ bool rvtng_mmu_core_write_reg(RvtngMmuCore *c, uint16_t off, uint32_t val)
     return true;
 }
 
-uint32_t rvtng_mmu_core_read_reg(const RvtngMmuCore *c, uint16_t off)
+uint32_t dayan_mmu_core_read_reg(const DayanMmuCore *c, uint16_t off)
 {
     switch (off) {
-    case RVTNG_MMU_REG_PTW_BASE_LO:
+    case DAYAN_MMU_REG_PTW_BASE_LO:
         return (uint32_t)low_word(c->ptw_base);
-    case RVTNG_MMU_REG_PTW_BASE_HI:
+    case DAYAN_MMU_REG_PTW_BASE_HI:
         return (uint32_t)(c->ptw_base >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_FIX_MAP_BASE_LO:
+    case DAYAN_MMU_REG_FIX_MAP_BASE_LO:
         return (uint32_t)low_word(c->fixmap_base);
-    case RVTNG_MMU_REG_FIX_MAP_BASE_HI:
+    case DAYAN_MMU_REG_FIX_MAP_BASE_HI:
         return (uint32_t)(c->fixmap_base >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_N_FIX_MAP_EN:
+    case DAYAN_MMU_REG_N_FIX_MAP_EN:
         return c->n_fixmap_en ? 1 : 0;
-    case RVTNG_MMU_REG_FLUSH_DONE:
+    case DAYAN_MMU_REG_FLUSH_DONE:
         return c->flush_done ? 1 : 0;
-    case RVTNG_MMU_REG_FLUSH_BUSY:
+    case DAYAN_MMU_REG_FLUSH_BUSY:
         return c->flush_busy ? 1 : 0;
-    case RVTNG_MMU_REG_FLUSH_ERR_CODE:
+    case DAYAN_MMU_REG_FLUSH_ERR_CODE:
         return c->flush_error_code;
-    case RVTNG_MMU_REG_GLOBAL_ASID:
+    case DAYAN_MMU_REG_GLOBAL_ASID:
         return c->global_asid;
-    case RVTNG_MMU_REG_ERROR_SLV_MASK_LO:
+    case DAYAN_MMU_REG_ERROR_SLV_MASK_LO:
         return (uint32_t)low_word(c->error_slv_mask);
-    case RVTNG_MMU_REG_ERROR_SLV_MASK_HI:
+    case DAYAN_MMU_REG_ERROR_SLV_MASK_HI:
         return (uint32_t)(c->error_slv_mask >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_ERROR_SLV_OFF_MODE:
+    case DAYAN_MMU_REG_ERROR_SLV_OFF_MODE:
         return c->redir_offset_enable ? 1 : 0;
-    case RVTNG_MMU_REG_ERROR_SLV_CFG_ERR:
+    case DAYAN_MMU_REG_ERROR_SLV_CFG_ERR:
         return 0;
-    case RVTNG_MMU_REG_REDIR_PAGE_FAULT_LO:
+    case DAYAN_MMU_REG_REDIR_PAGE_FAULT_LO:
         return (uint32_t)low_word(c->redir[0]);
-    case RVTNG_MMU_REG_REDIR_PAGE_FAULT_HI:
+    case DAYAN_MMU_REG_REDIR_PAGE_FAULT_HI:
         return (uint32_t)(c->redir[0] >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_REDIR_READ_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_READ_PERM_LO:
         return (uint32_t)low_word(c->redir[1]);
-    case RVTNG_MMU_REG_REDIR_READ_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_READ_PERM_HI:
         return (uint32_t)(c->redir[1] >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_REDIR_WRITE_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_WRITE_PERM_LO:
         return (uint32_t)low_word(c->redir[2]);
-    case RVTNG_MMU_REG_REDIR_WRITE_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_WRITE_PERM_HI:
         return (uint32_t)(c->redir[2] >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_REDIR_EXEC_PERM_LO:
+    case DAYAN_MMU_REG_REDIR_EXEC_PERM_LO:
         return (uint32_t)low_word(c->redir[3]);
-    case RVTNG_MMU_REG_REDIR_EXEC_PERM_HI:
+    case DAYAN_MMU_REG_REDIR_EXEC_PERM_HI:
         return (uint32_t)(c->redir[3] >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_REDIR_PTW_ERR_LO:
+    case DAYAN_MMU_REG_REDIR_PTW_ERR_LO:
         return (uint32_t)low_word(c->redir[4]);
-    case RVTNG_MMU_REG_REDIR_PTW_ERR_HI:
+    case DAYAN_MMU_REG_REDIR_PTW_ERR_HI:
         return (uint32_t)(c->redir[4] >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_REDIR_DEFAULT_LO:
+    case DAYAN_MMU_REG_REDIR_DEFAULT_LO:
         return (uint32_t)low_word(c->redir[5]);
-    case RVTNG_MMU_REG_REDIR_DEFAULT_HI:
+    case DAYAN_MMU_REG_REDIR_DEFAULT_HI:
         return (uint32_t)(c->redir[5] >> 32) & 0x00ffffff;
-    case RVTNG_MMU_REG_FIX_MAP_SIZE_LO:
+    case DAYAN_MMU_REG_FIX_MAP_SIZE_LO:
         return (uint32_t)low_word(c->fixmap_size_pages);
-    case RVTNG_MMU_REG_FIX_MAP_SIZE_HI:
+    case DAYAN_MMU_REG_FIX_MAP_SIZE_HI:
         return (uint32_t)(c->fixmap_size_pages >> 32) & 0x00ffffff;
     default:
         return 0;

@@ -19,7 +19,7 @@ make -j16
 ## 运行
 
 ``` bash
-./qemu-system-riscv64 -s -S -bios /workspace/npu-firmware/bl0/bootrom.elf -machine rvtng-v0 -nographic -m 4096
+./qemu-system-riscv64 -s -S -bios /workspace/npu-firmware/bl0/bootrom.elf -machine dayan-v0 -nographic -m 4096
 ```
 
 ## 调试器挂载
