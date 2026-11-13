@@ -1,6 +1,14 @@
 /*
- * QEMU System Emulator
+ * QEMU System Emulator with Dayan integration
  *
+ * Dayan integration modifications:
+ * Copyright (c) 2026 Institute of Computing Technology,
+ * Chinese Academy of Sciences
+ *
+ * These modifications are licensed under the GNU General Public License,
+ * version 2 or later. See COPYING in the top-level directory.
+ *
+ * Original QEMU code (copyright and license notice retained):
  * Copyright (c) 2003-2020 Fabrice Bellard
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
