@@ -649,9 +649,14 @@ static void dayan_v0_soc_realize(DeviceState *dev, Error **errp)
         void *uram;
 
         snprintf(shm_name, sizeof(shm_name), "/uram_shm_%u", core_idx);
-        uram = frontend_get_shm_ptr(shm_name);
+        uram = frontend_get_shm_ptr_sized(shm_name,
+                                          memmap[DAYAN_V0_URAM].size);
         snprintf(region_name, sizeof(region_name), "dayan.v0.uram_%u",
                  core_idx);
+        if (!uram && dayan_file_shm_enabled()) {
+            error_setg(errp, "Unable to map shared URAM %s", shm_name);
+            return;
+        }
         if (uram) {
             memory_region_init_ram_ptr(&s->uram[core_idx], OBJECT(dev),
                                        region_name,
@@ -745,7 +750,7 @@ static void dayan_v0_machine_init(MachineState *machine)
     qdev_realize(DEVICE(&s->soc), NULL, &error_fatal);
 
     /* Shared DRAM */
-    dram = frontend_get_shm_ptr("/dram_shm_0");
+    dram = frontend_get_shm_ptr_sized("/dram_shm_0", machine->ram_size);
     if (dram == NULL) {
         error_report("Unable to find shared dram pointer");
         exit(EXIT_FAILURE);
